@@ -26,10 +26,25 @@ def main():
     import warnings
     warnings.filterwarnings('ignore', category=UserWarning)
     
-    # Force CPU usage since there are device compatibility issues with MPS
-    print("\nUsing CPU for transcription (MPS compatibility issue)")
-    os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-    torch.set_default_device('cpu')
+    # Determine device to use
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+        print("\nUsing MPS (GPU) for transcription")
+    else:
+        device = torch.device("cpu")
+        print("\nUsing CPU for transcription")
+    
+    import torch
+    if not torch.backends.mps.is_available():
+        if not torch.backends.mps.is_built():
+            print("MPS not available because the current PyTorch install was not built with MPS enabled.")
+        else:
+            print("MPS not available because the current MacOS version is not 12.3+ and/or you do not have an MPS-enabled device on this machine.")
+    else:
+        print("MPS is available.")
+    
+    # Load your model
+    model = YourModelClass().to(device)
     
     # Example YouTube URL
     youtube_url = "https://www.youtube.com/watch?v=P3ouE_CCzNA"
@@ -61,8 +76,9 @@ def main():
         
         text_output_dir, metadata_output_dir = vid2cleantxt.transcribe.transcribe_dir(
             input_dir=input_dir,
-            model_id="openai/whisper-base.en",
-            chunk_length=30
+            model_id="openai/whisper-large-v3",
+            chunk_length=30,
+            device=device  # Pass the device to the function if supported
         )
         
         print(f"\nTranscription completed!")
@@ -90,5 +106,11 @@ def main():
         except Exception as e:
             print(f"Warning: Error cleaning up temporary directory: {e}")
 
+    # When creating tensors
+    x = torch.ones(5, device=device)
+
+    # During inference or training
+    output = model(input_tensor.to(device))
+
 if __name__ == "__main__":
-    main() 
+    main()

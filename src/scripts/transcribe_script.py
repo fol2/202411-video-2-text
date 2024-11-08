@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import logging
+import torch
 
 MAX_CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
@@ -20,17 +21,33 @@ try:
     print(f"Starting transcription for directory: {input_dir}", file=sys.stderr)
     print(f"Source language: {language if language != 'auto' else 'Auto-detect'}", file=sys.stderr)
     
+    # Determine device
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        try:
+            device = "mps"
+        except Exception as e:
+            print(f"MPS initialization failed, falling back to CPU: {str(e)}", file=sys.stderr)
+            device = "cpu"
+    else:
+        device = "cpu"
+    
+    print(f"Using device: {device}", file=sys.stderr)
+    
     text_output_dir, metadata_output_dir = vid2cleantxt.transcribe.transcribe_dir(
         input_dir=input_dir,
         model_id="openai/whisper-large-v3",
         chunk_length=30,
+        device=device
     )
 
     # Output results in chunks
     results = {
         "text_output_dir": text_output_dir,
         "metadata_output_dir": metadata_output_dir,
-        "detected_language": language
+        "detected_language": language,
+        "device_used": device
     }
     
     # Stream the result in chunks

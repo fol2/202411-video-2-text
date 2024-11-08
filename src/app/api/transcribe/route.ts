@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { exec, spawn } from 'child_process'
+import { spawn, exec } from 'child_process'
 import { promisify } from 'util'
 import { join } from 'path'
-import { readFile, writeFile } from 'fs/promises'
-import { readdir } from 'fs/promises'
+import { readFile, writeFile, readdir } from 'fs/promises'
 import { headers } from 'next/headers'
 
 export const runtime = 'nodejs'
@@ -93,19 +92,15 @@ export async function POST(request: NextRequest) {
           }
 
           // Setup directories using Python script
-          console.log('Setting up directories...')
           const { stdout: dirsOutput } = await execAsync(`python3 "${PYTHON_SCRIPT}" setup 2>/dev/null`)
           if (!dirsOutput) {
             throw new Error('Failed to get directory information')
           }
           const { input_dir, output_dir } = JSON.parse(dirsOutput.trim())
-          console.log('Directories created:', { input_dir, output_dir })
-
-          let audioPath: string
 
           if (file) {
             const buffer = await file.arrayBuffer()
-            audioPath = join(input_dir, file.name)
+            const audioPath = join(input_dir, file.name)
             await writeFile(audioPath, Buffer.from(buffer))
           } else if (youtubeLink) {
             sendSSEMessage(encoder, controller, {
@@ -113,168 +108,97 @@ export async function POST(request: NextRequest) {
               message: 'Downloading YouTube video...'
             })
 
-            console.log('Downloading YouTube video:', youtubeLink)
             const outputPath = join(input_dir, 'video.mp4')
-            try {
-              // First download the video
-              const { stdout, stderr } = await execAsync(
-                `python3 "${PYTHON_SCRIPT}" download "${outputPath}" "${youtubeLink}"`,
-                { maxBuffer: 50 * 1024 * 1024 }
-              )
-              
-              if (stderr) {
-                console.log('Download stderr:', stderr)
-              }
-
-              const jsonStr = stdout.trim().split('\n').find(line => 
-                line.trim().startsWith('{') && line.trim().endsWith('}')
-              )
-
-              if (!jsonStr) {
-                throw new Error('No valid JSON response found in output')
-              }
-
-              const result = JSON.parse(jsonStr)
-              if (!result.success || !result.file) {
-                throw new Error('Invalid download response format')
-              }
-
-              audioPath = result.file
-              console.log('Download successful, audio path:', audioPath)
-
-              sendSSEMessage(encoder, controller, {
-                type: 'status',
-                message: 'Starting transcription...'
-              })
-
-              const pythonProcess = spawn('python3', [
-                TRANSCRIBE_SCRIPT, 
-                input_dir,
-                language
-              ])
-
-              let accumulatedJson = ''
-              let isCollectingJson = false
-
-              // Handle real-time stdout
-              pythonProcess.stdout.on('data', (data) => {
-                const output = data.toString()
-                
-                if (output.includes('JSON_OUTPUT_START')) {
-                  isCollectingJson = true
-                  return
-                }
-                
-                if (output.includes('JSON_OUTPUT_END')) {
-                  isCollectingJson = false
-                  try {
-                    const result = JSON.parse(accumulatedJson)
-                    sendSSEMessage(encoder, controller, {
-                      type: 'complete',
-                      transcription: result
-                    })
-                  } catch (e) {
-                    console.error('JSON parse error:', e)
-                  }
-                  return
-                }
-
-                if (isCollectingJson && output.startsWith('CHUNK:')) {
-                  accumulatedJson += output.slice(6) // Remove 'CHUNK:' prefix
-                  return
-                }
-
-                // Regular output handling
-                sendSSEMessage(encoder, controller, {
-                  type: 'log', 
-                  message: output
-                })
-              })
-
-              // Handle real-time stderr
-              pythonProcess.stderr.on('data', (data) => {
-                const error = data.toString()
-                // Parse progress information
-                if (error.includes('%|')) {
-                  const progressMatch = error.match(/(\d+)%\|/)
-                  if (progressMatch) {
-                    sendSSEMessage(encoder, controller, {
-                      type: 'progress',
-                      progress: parseInt(progressMatch[1])
-                    })
-                  }
-                }
-                sendSSEMessage(encoder, controller, {
-                  type: 'log',
-                  message: error
-                })
-              })
-
-              // Handle process completion
-              await new Promise((resolve, reject) => {
-                pythonProcess.on('close', async (code) => {
-                  if (code === 0) {
-                    try {
-                      const resultsDir = join(input_dir, 'v2clntxt_transcriptions', 'results_SC_pipeline')
-                      const files = await readdir(resultsDir)
-                      const transcriptionPath = join(resultsDir, files[0])
-                      const transcription = await readFile(transcriptionPath, 'utf-8')
-
-                      sendSSEMessage(encoder, controller, {
-                        type: 'complete',
-                        transcription
-                      })
-                      resolve(null)
-                    } catch (error) {
-                      reject(error)
-                    }
-                  } else {
-                    reject(new Error(`Process exited with code ${code}`))
-                  }
-                })
-
-                pythonProcess.on('error', reject)
-              })
-            } catch (error) {
-              console.error('Download/transcription error:', error)
-              throw error
+            const { stdout, stderr } = await execAsync(
+              `python3 "${PYTHON_SCRIPT}" download "${outputPath}" "${youtubeLink}"`,
+              { maxBuffer: 50 * 1024 * 1024 }
+            )
+            
+            if (stderr) {
+              console.log('Download stderr:', stderr)
             }
           }
 
-          console.log('Checking if audio file exists at:', audioPath!)
-          try {
-            await readFile(audioPath!)
-            console.log('Audio file exists and is readable')
-          } catch (error) {
-            console.error('Audio file check error:', error)
-            throw new Error('Audio file not found or not accessible')
-          }
-
-          // Make the API call to Hugging Face
-          const audioData = await readFile(audioPath!)
-          const response = await fetch(process.env.HF_API_ENDPOINT!, {
-            headers: {
-              Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-              'Content-Type': 'audio/mpeg',
-            },
-            method: "POST",
-            body: audioData,
+          // Start transcription process
+          sendSSEMessage(encoder, controller, {
+            type: 'status',
+            message: 'Starting transcription...'
           })
 
-          if (!response.ok) {
-            throw new Error(`Transcription failed: ${response.statusText}`)
-          }
+          const pythonProcess = spawn('python3', [
+            TRANSCRIBE_SCRIPT, 
+            input_dir,
+            language
+          ])
 
-          const result = await response.json()
-          
+          let accumulatedJson = ''
+          let isCollectingJson = false
+
+          // Handle real-time stdout
+          pythonProcess.stdout.on('data', (data) => {
+            const output = data.toString()
+            
+            if (output.includes('JSON_OUTPUT_START')) {
+              isCollectingJson = true
+              return
+            }
+            
+            if (output.includes('JSON_OUTPUT_END')) {
+              isCollectingJson = false
+              try {
+                const result = JSON.parse(accumulatedJson)
+                sendSSEMessage(encoder, controller, {
+                  type: 'complete',
+                  transcription: result
+                })
+              } catch (e) {
+                console.error('JSON parse error:', e)
+              }
+              return
+            }
+
+            if (isCollectingJson && output.startsWith('CHUNK:')) {
+              accumulatedJson += output.slice(6)
+              return
+            }
+
+            sendSSEMessage(encoder, controller, {
+              type: 'log', 
+              message: output
+            })
+          })
+
+          pythonProcess.stderr.on('data', (data) => {
+            const error = data.toString()
+            if (error.includes('%|')) {
+              const progressMatch = error.match(/(\d+)%\|/)
+              if (progressMatch) {
+                sendSSEMessage(encoder, controller, {
+                  type: 'progress',
+                  progress: parseInt(progressMatch[1])
+                })
+              }
+            }
+            sendSSEMessage(encoder, controller, {
+              type: 'log',
+              message: error
+            })
+          })
+
+          await new Promise((resolve, reject) => {
+            pythonProcess.on('close', async (code) => {
+              if (code === 0) {
+                resolve(null)
+              } else {
+                reject(new Error(`Process exited with code ${code}`))
+              }
+            })
+            pythonProcess.on('error', reject)
+          })
+
           // Clean up temp files
           await execAsync(`python3 -c "import shutil; shutil.rmtree('${input_dir}'); shutil.rmtree('${output_dir}')"`)
           
-          sendSSEMessage(encoder, controller, {
-            type: 'complete',
-            transcription: result.text || result[0]?.text
-          })
-
           controller.close()
         } catch (error) {
           sendSSEMessage(encoder, controller, {
