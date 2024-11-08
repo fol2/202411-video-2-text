@@ -153,17 +153,41 @@ export async function POST(request: NextRequest) {
                 language
               ])
 
+              let accumulatedJson = ''
+              let isCollectingJson = false
+
               // Handle real-time stdout
               pythonProcess.stdout.on('data', (data) => {
                 const output = data.toString()
-                // Add token length check and truncate if needed
-                const truncatedOutput = output.length > MAX_TOKEN_LENGTH 
-                  ? output.slice(0, MAX_TOKEN_LENGTH) 
-                  : output
                 
+                if (output.includes('JSON_OUTPUT_START')) {
+                  isCollectingJson = true
+                  return
+                }
+                
+                if (output.includes('JSON_OUTPUT_END')) {
+                  isCollectingJson = false
+                  try {
+                    const result = JSON.parse(accumulatedJson)
+                    sendSSEMessage(encoder, controller, {
+                      type: 'complete',
+                      transcription: result
+                    })
+                  } catch (e) {
+                    console.error('JSON parse error:', e)
+                  }
+                  return
+                }
+
+                if (isCollectingJson && output.startsWith('CHUNK:')) {
+                  accumulatedJson += output.slice(6) // Remove 'CHUNK:' prefix
+                  return
+                }
+
+                // Regular output handling
                 sendSSEMessage(encoder, controller, {
-                  type: 'log',
-                  message: truncatedOutput
+                  type: 'log', 
+                  message: output
                 })
               })
 
@@ -269,4 +293,4 @@ export async function POST(request: NextRequest) {
       },
     }
   )
-} 
+}

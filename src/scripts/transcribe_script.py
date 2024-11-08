@@ -4,6 +4,8 @@ import os
 import sys
 import logging
 
+MAX_CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+
 try:
     # Configure logging to suppress warnings
     logging.getLogger('transformers').setLevel(logging.ERROR)
@@ -24,14 +26,21 @@ try:
         chunk_length=30,
     )
 
-    print("JSON_OUTPUT_START")
-    print(json.dumps({
+    # Output results in chunks
+    results = {
         "text_output_dir": text_output_dir,
         "metadata_output_dir": metadata_output_dir,
         "detected_language": language
-    }))
+    }
+    
+    # Stream the result in chunks
+    json_str = json.dumps(results)
+    print("JSON_OUTPUT_START")
+    for i in range(0, len(json_str), MAX_CHUNK_SIZE):
+        chunk = json_str[i:i + MAX_CHUNK_SIZE]
+        print(f"CHUNK:{chunk}")
     print("JSON_OUTPUT_END")
 
 except Exception as e:
     print(f"Error during transcription: {str(e)}", file=sys.stderr)
-    sys.exit(1) 
+    sys.exit(1)

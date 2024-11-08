@@ -31,6 +31,12 @@ const nextConfig = {
   },
   serverRuntimeConfig: {
     maxBodySize: '500mb',
+    api: {
+      bodyParser: {
+        sizeLimit: '500mb'
+      },
+      responseLimit: '500mb'
+    }
   },
   outputFileTracing: true,
   rewrites: async () => {
@@ -40,7 +46,7 @@ const nextConfig = {
         destination: '/api/:path*',
       },
     ]
-  },
+  }
 }
 
-module.exports = nextConfig 
+module.exports = nextConfig
