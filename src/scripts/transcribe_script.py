@@ -21,7 +21,7 @@ try:
     text_output_dir, metadata_output_dir = vid2cleantxt.transcribe.transcribe_dir(
         input_dir=input_dir,
         model_id="openai/whisper-large-v3",
-        chunk_length=30
+        chunk_length=30,
     )
 
     print("JSON_OUTPUT_START")
