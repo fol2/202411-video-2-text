@@ -70,4 +70,3 @@ Thumbs.db
 .env.production.local
 
 .cache
-/venv/bin
