@@ -1,13 +1,30 @@
+'use client'
+
 import VideoTranscription from '@/components/template/video-transcription'
+import { useState } from 'react'
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 
 export default function Home() {
+  const [showDebug, setShowDebug] = useState(false)
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b">
         <div className="container mx-auto py-4">
-          <h1 className="text-2xl font-bold text-center">
-            Video to Text Transcription
-          </h1>
+          <div className="flex justify-between items-center">
+            <h1 className="text-2xl font-bold text-center flex-1">
+              Video to Text Transcription
+            </h1>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="debug-mode" className="text-sm">Debug Mode</Label>
+              <Switch
+                id="debug-mode"
+                checked={showDebug}
+                onCheckedChange={setShowDebug}
+              />
+            </div>
+          </div>
         </div>
       </header>
       
@@ -20,7 +37,7 @@ export default function Home() {
             </p>
           </div>
           
-          <VideoTranscription />
+          <VideoTranscription showDebug={showDebug} />
         </div>
       </main>
 

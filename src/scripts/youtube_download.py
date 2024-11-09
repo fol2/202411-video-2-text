@@ -3,6 +3,7 @@ import tempfile
 import json
 import yt_dlp
 import sys
+import time
 
 def setup_dirs():
     try:
@@ -17,13 +18,36 @@ def setup_dirs():
         sys.exit(1)
 
 def download_video(url, output_path):
+    start_time = time.time()
+    
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            if total_bytes > 0:
+                downloaded = d.get('downloaded_bytes', 0)
+                progress = (downloaded / total_bytes) * 100
+                speed = d.get('speed', 0)
+                eta = d.get('eta', 0)
+                elapsed = int(time.time() - start_time)
+                
+                if speed:
+                    speed_mb = speed / (1024 * 1024)
+                    speed_str = f"{speed_mb:.2f}MiB/s"
+                else:
+                    speed_str = "N/A"
+                
+                eta_str = f"{eta//60:02d}:{eta%60:02d}" if eta else "00:00"
+                elapsed_str = f"{elapsed//60:02d}:{elapsed%60:02d}"
+                
+                print(f"PROGRESS:{progress:.1f}|{speed_str}|{eta_str}|{elapsed_str}", 
+                      file=sys.stderr)
+
     ydl_opts = {
-        'format': 'best',  # Download best quality video
+        'format': 'best',
         'outtmpl': output_path,
-        'quiet': True,
-        'no_warnings': True,
-        'progress_hooks': [lambda d: None],
+        'progress_hooks': [progress_hook],
     }
+    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])

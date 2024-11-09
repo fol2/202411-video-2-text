@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Upload, Link, Play } from 'lucide-react'
+import { cn } from "@/lib/utils"
 
 // Language options based on Whisper's supported languages
 const LANGUAGE_OPTIONS = [
@@ -34,19 +35,102 @@ const LANGUAGE_OPTIONS = [
   // Add more languages as needed
 ]
 
-export default function Component() {
+type ErrorCode = 'PAYLOAD_TOO_LARGE' | 'PYTHON_ENV_ERROR' | 'TRANSCRIPTION_ERROR';
+
+interface ErrorMessage {
+  type: 'error';
+  code: ErrorCode;
+  message: string;
+}
+
+// Add interface for detailed progress info
+interface DetailedProgress {
+  progress: number
+  speed?: string
+  eta?: string
+  timeElapsed?: string
+  currentStep?: string
+  totalSteps?: string
+  stepsPerSecond?: string
+}
+
+// Add a custom hook to handle progress updates
+const useProgress = () => {
+  const [progress, setProgress] = useState(0)
+  const [status, setStatus] = useState('')
+  const [details, setDetails] = useState<DetailedProgress>({ progress: 0 })
+  const startTime = useRef<number>(Date.now())
+
+  const updateProgress = useCallback((value: number, message?: string, detailedInfo?: Partial<DetailedProgress>) => {
+    setProgress(value)
+    if (message) setStatus(message)
+    if (detailedInfo) {
+      const timeElapsed = ((Date.now() - startTime.current) / 1000).toFixed(0)
+      setDetails({
+        progress: value,
+        timeElapsed: `${Math.floor(parseInt(timeElapsed) / 60)}:${(parseInt(timeElapsed) % 60).toString().padStart(2, '0')}`,
+        ...detailedInfo
+      })
+    }
+  }, [])
+
+  const resetProgress = useCallback(() => {
+    startTime.current = Date.now()
+    setProgress(0)
+    setStatus('')
+    setDetails({ progress: 0 })
+  }, [])
+
+  return { progress, status, details, updateProgress, resetProgress }
+}
+
+interface Props {
+  showDebug?: boolean
+}
+
+// Add this function near the top with other utility functions
+const getYoutubeVideoId = (url: string): string | null => {
+  try {
+    const urlObj = new URL(url)
+    if (urlObj.hostname.includes('youtube.com')) {
+      return urlObj.searchParams.get('v')
+    } else if (urlObj.hostname === 'youtu.be') {
+      return urlObj.pathname.slice(1)
+    } else if (urlObj.pathname.includes('/shorts/')) {
+      return urlObj.pathname.split('/shorts/')[1]
+    }
+  } catch (e) {
+    return null
+  }
+  return null
+}
+
+// Add this function to fetch YouTube video title
+const fetchYouTubeTitle = async (videoId: string) => {
+  try {
+    const response = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
+    const data = await response.json()
+    return data.title
+  } catch (e) {
+    return null
+  }
+}
+
+export default function Component({ showDebug = false }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [youtubeLink, setYoutubeLink] = useState('')
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [status, setStatus] = useState('')
   const [logs, setLogs] = useState<string[]>([])
   const [transcription, setTranscription] = useState('')
   const [error, setError] = useState('')
   const [selectedLanguage, setSelectedLanguage] = useState('auto')
   const [activeTab, setActiveTab] = useState('upload')
+  const [videoTitle, setVideoTitle] = useState<string | null>(null)
 
   const logsEndRef = useRef<HTMLDivElement>(null)
+
+  // Use the custom hook
+  const { progress, status, details, updateProgress, resetProgress } = useProgress()
 
   // Auto-scroll logs
   useEffect(() => {
@@ -63,19 +147,95 @@ export default function Component() {
     }
   }
 
-  const handleYoutubeLinkChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setYoutubeLink(event.target.value)
+  // Update handleYoutubeLinkChange to fetch title
+  const handleYoutubeLinkChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value
+    setYoutubeLink(value)
     setFile(null)
     setError('')
+    setVideoTitle(null)
+    
+    // Basic YouTube URL validation
+    if (value && !isValidYoutubeUrl(value)) {
+      setError('Please enter a valid YouTube URL')
+    } else if (value) {
+      const videoId = getYoutubeVideoId(value)
+      if (videoId) {
+        const title = await fetchYouTubeTitle(videoId)
+        setVideoTitle(title)
+      }
+    }
   }
+
+  // Add YouTube URL validation helper
+  const isValidYoutubeUrl = (url: string): boolean => {
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/
+    return youtubeRegex.test(url)
+  }
+
+  // Modify the addLog function to always add logs, regardless of debug mode
+  const addLog = useCallback((message: string) => {
+    setLogs(prev => [...prev, message])
+  }, [])
+
+  const handleServerMessage = (data: any) => {
+    // Always log to console for development purposes
+    console.log('Server message:', data)
+    
+    switch (data.type) {
+      case 'status':
+        updateProgress(progress, data.message)
+        addLog(`Status: ${data.message}`)
+        break
+      
+      case 'progress':
+        if (typeof data.progress === 'number') {
+          const progressValue = Math.min(Math.max(data.progress, 0), 100)
+          updateProgress(progressValue, data.message, {
+            speed: data.speed,
+            eta: data.eta,
+            currentStep: data.currentStep,
+            totalSteps: data.totalSteps,
+            stepsPerSecond: data.stepsPerSecond
+          })
+          addLog(`Progress: ${progressValue.toFixed(1)}% - ${data.message || ''}`)
+        }
+        break
+      
+      case 'log':
+        if (data.message?.trim()) {
+          addLog(data.message.trim())
+        }
+        break
+      
+      case 'complete':
+        setTranscription(data.transcription)
+        setIsTranscribing(false)
+        addLog('Transcription complete!')
+        break
+      
+      case 'error':
+        setError(data.message)
+        setIsTranscribing(false)
+        addLog(`Error: ${data.message}`)
+        break
+    }
+  }
+
+  // Modify the progress monitoring effect
+  useEffect(() => {
+    if (showDebug) {
+      console.log('Progress updated:', progress) // Only log when debug is enabled
+    }
+  }, [progress, showDebug])
 
   const startTranscription = async () => {
     try {
       setIsTranscribing(true)
-      setProgress(0)
       setLogs([])
       setTranscription('')
       setError('')
+      resetProgress()
 
       const formData = new FormData()
       if (file) {
@@ -90,10 +250,15 @@ export default function Component() {
         body: formData,
       })
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No response body')
 
       const decoder = new TextDecoder()
+      
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -103,34 +268,111 @@ export default function Component() {
         
         for (const event of events) {
           if (!event.trim() || !event.startsWith('data: ')) continue
-          const data = JSON.parse(event.slice(6))
-
-          switch (data.type) {
-            case 'status':
-              setStatus(data.message)
-              break
-            case 'progress':
-              setProgress(data.progress)
-              break
-            case 'log':
-              setLogs(prev => [...prev, data.message])
-              break
-            case 'complete':
-              setTranscription(data.transcription)
-              setIsTranscribing(false)
-              break
-            case 'error':
-              setError(data.message)
-              setIsTranscribing(false)
-              break
+          
+          try {
+            const data = JSON.parse(event.slice(6))
+            handleServerMessage(data)
+          } catch (parseError) {
+            console.error('Error parsing event:', parseError)
+            setLogs(prev => [...prev, `Error parsing server response: ${parseError}`])
           }
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to transcribe')
+      const errorMessage = err instanceof Error ? err.message : 'Failed to transcribe'
+      setError(errorMessage)
+      setLogs(prev => [...prev, `Error: ${errorMessage}`])
       setIsTranscribing(false)
     }
   }
+
+  // Update the ProgressDisplay component to show detailed information
+  const ProgressDisplay = memo(({ value, status, details }: { 
+    value: number, 
+    status: string,
+    details: DetailedProgress 
+  }) => {
+    const getDetailedStatus = () => {
+      if (details.currentStep && details.totalSteps) {
+        // Format transcription status in a more readable way
+        const progress = `${value.toFixed(1)}%`
+        const chunks = `Chunk ${details.currentStep}/${details.totalSteps}`
+        const timing = `${details.timeElapsed} elapsed, ${details.eta} remaining`
+        const speed = details.stepsPerSecond ? 
+          `Processing speed: ${details.stepsPerSecond.replace('it/s', 'chunks/sec')}` : ''
+        
+        return (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div>Progress: {progress}</div>
+            <div>{chunks}</div>
+            <div>{timing}</div>
+            <div>{speed}</div>
+          </div>
+        )
+      } else if (details.speed) {
+        // Download status format
+        return (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div>Download speed: {details.speed}</div>
+            <div>Time elapsed: {details.timeElapsed}</div>
+            <div>Time remaining: {details.eta}</div>
+            <div>Progress: {value.toFixed(1)}%</div>
+          </div>
+        )
+      }
+      return ''
+    }
+
+    return (
+      <div className="space-y-2 w-full">
+        <div className="flex justify-between text-sm text-gray-500">
+          <span className="truncate max-w-[80%] font-medium">{status}</span>
+          <span className="font-medium">{value.toFixed(1)}%</span>
+        </div>
+        <Progress 
+          value={value} 
+          className="h-2 transition-all duration-200" 
+        />
+        <div className="text-xs text-gray-500 font-mono bg-gray-50 p-2 rounded-md">
+          {getDetailedStatus()}
+        </div>
+      </div>
+    )
+  })
+
+  // Update the YouTubeInput component
+  const YouTubeInput = () => (
+    <div className="space-y-4">
+      <div className="flex items-center space-x-2">
+        <Link className="w-5 h-5 text-red-500 flex-shrink-0" />
+        <Input 
+          type="url"
+          placeholder="https://www.youtube.com/watch?v=..." 
+          value={youtubeLink}
+          onChange={handleYoutubeLinkChange}
+          className={cn(
+            "flex-1",
+            error && "border-red-500 focus-visible:ring-red-500"
+          )}
+        />
+      </div>
+      {error && (
+        <p className="text-sm text-red-500">{error}</p>
+      )}
+
+      {/* Show instructions only when no valid URL is entered */}
+      {(!youtubeLink || error) && (
+        <div className="text-sm text-muted-foreground">
+          Supported formats:
+          <ul className="list-disc list-inside ml-2 mt-1">
+            <li>youtube.com/watch?v=...</li>
+            <li>youtu.be/...</li>
+            <li>youtube.com/shorts/...</li>
+          </ul>
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <Card className="w-full max-w-3xl mx-auto">
@@ -164,16 +406,12 @@ export default function Component() {
             className="w-full"
           >
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger 
-                value="upload"
-                onClick={() => setActiveTab('upload')}
-              >
+              <TabsTrigger value="upload" className="cursor-pointer">
+                <Upload className="w-4 h-4 mr-2" />
                 Upload Video
               </TabsTrigger>
-              <TabsTrigger 
-                value="youtube"
-                onClick={() => setActiveTab('youtube')}
-              >
+              <TabsTrigger value="youtube" className="cursor-pointer">
+                <Link className="w-4 h-4 mr-2" />
                 YouTube Link
               </TabsTrigger>
             </TabsList>
@@ -198,54 +436,70 @@ export default function Component() {
               </div>
               {file && <p className="mt-2 text-sm text-gray-500">Selected file: {file.name}</p>}
             </TabsContent>
-            <TabsContent value="youtube">
-              <div className="flex items-center space-x-2">
-                <Link className="w-5 h-5 text-red-500" />
-                <Input 
-                  type="text" 
-                  placeholder="Paste YouTube link here" 
-                  value={youtubeLink}
-                  onChange={handleYoutubeLinkChange}
-                />
-              </div>
+            <TabsContent value="youtube" className="pt-4">
+              <YouTubeInput />
             </TabsContent>
           </Tabs>
         </div>
       </CardContent>
       <CardFooter className="flex flex-col items-center space-y-4">
-        {error && (
-          <p className="text-sm text-red-500">{error}</p>
-        )}
         <Button 
           onClick={startTranscription} 
-          disabled={isTranscribing || (!file && !youtubeLink)}
+          disabled={isTranscribing || (!file && (!youtubeLink || !!error))}
           className="w-full"
         >
           <Play className="w-4 h-4 mr-2" />
-          Start Transcription
+          {isTranscribing ? 'Transcribing...' : 'Start Transcription'}
         </Button>
+
         {isTranscribing && (
-          <div className="space-y-2">
-            <div className="text-sm text-gray-500">{status}</div>
-            <Progress value={progress} />
-          </div>
+          <ProgressDisplay 
+            value={progress} 
+            status={status} 
+            details={details}
+          />
         )}
-        {logs.length > 0 && (
-          <div className="mt-4 border rounded-lg p-4 bg-black text-white">
-            <div className="font-mono text-sm h-64 overflow-auto">
-              {logs.map((log, i) => (
-                <div key={i} className="whitespace-pre-wrap">{log}</div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          </div>
-        )}
+
         {transcription && (
-          <div className="mt-4 border rounded-lg p-4">
+          <div className="mt-4 border rounded-lg p-4 w-full">
             <h3 className="text-lg font-semibold mb-2">Transcription</h3>
             <p className="whitespace-pre-wrap">{transcription}</p>
           </div>
         )}
+
+        {/* YouTube embed after transcription */}
+        {youtubeLink && !error && (
+          <div className="w-full space-y-2">
+            {videoTitle && (
+              <h3 className="text-lg font-medium text-gray-900">{videoTitle}</h3>
+            )}
+            <div className="aspect-video w-full">
+              <iframe
+                src={`https://www.youtube.com/embed/${getYoutubeVideoId(youtubeLink)}`}
+                className="w-full h-full rounded-lg"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Debug console at the bottom */}
+        <div 
+          className={cn(
+            "mt-4 border rounded-lg p-4 bg-black text-white w-full",
+            !showDebug && "hidden" // Hide with CSS when debug is off
+          )}
+        >
+          <div className="font-mono text-sm h-64 overflow-auto">
+            {logs.map((log, i) => (
+              <div key={i} className="whitespace-pre-wrap text-green-400">
+                {`[${new Date().toLocaleTimeString()}] ${log}`}
+              </div>
+            ))}
+            <div ref={logsEndRef} />
+          </div>
+        </div>
       </CardFooter>
     </Card>
   )
