@@ -1,5 +1,30 @@
-yt-dlp
-torch
-transformers
-accelerate
-neuspell 
+# Core dependencies
+torch>=1.8.2
+transformers>=4.23.0
+accelerate>=0.20.0
+yt-dlp>=2023.7.6
+
+# Text processing
+neuspell>=1.0.0
+clean-text>=0.6.0
+spacy>=3.0.0,<4.0.0
+pysbd>=0.3.4
+wordninja==2.0.0
+
+# Audio processing
+librosa>=0.9.0
+pydub>=0.24.1
+moviepy~=1.0.3
+
+# Utils
+numpy>=1.19.0
+pandas>=1.3.0
+tqdm
+joblib
+requests
+packaging
+humanize
+psutil>=5.9.2
+natsort>=7.1.1
+setuptools>=58.1.0
+GPUtil
