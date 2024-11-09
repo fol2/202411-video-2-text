@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Link, Play } from 'lucide-react'
+import { Upload, Link, Play, AlertCircle, X, CheckCircle } from 'lucide-react'
 import { cn } from "@/lib/utils"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 
 // Language options based on Whisper's supported languages
 const LANGUAGE_OPTIONS = [
@@ -116,6 +117,15 @@ const fetchYouTubeTitle = async (videoId: string) => {
   }
 }
 
+// Add new interfaces for upload state
+interface UploadState {
+  progress: number
+  speed: string
+  status: 'idle' | 'uploading' | 'complete' | 'error'
+  isUploading: boolean
+  uploadId?: string  // Add this to store the upload ID
+}
+
 export default function Component({ showDebug = false }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [youtubeLink, setYoutubeLink] = useState('')
@@ -139,12 +149,134 @@ export default function Component({ showDebug = false }: Props) {
     }
   }, [logs])
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const [uploadState, setUploadState] = useState<UploadState>({
+    progress: 0,
+    speed: '',
+    status: 'idle',
+    isUploading: false
+  })
+  const uploadRef = useRef<XMLHttpRequest | null>(null)
+
+  // Add beforeunload handler
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (uploadState.isUploading) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [uploadState.isUploading])
+
+  // Update handleFileChange to handle upload
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
-      setFile(event.target.files[0])
+      const selectedFile = event.target.files[0]
+      
+      // Validate file type
+      const validTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime']
+      if (!validTypes.includes(selectedFile.type)) {
+        setError('Please select a valid video file (MP4, WebM, OGG, or MOV)')
+        return
+      }
+
+      // Validate file size (500MB limit)
+      if (selectedFile.size > 500 * 1024 * 1024) {
+        setError('File size must be less than 500MB')
+        return
+      }
+
+      setFile(selectedFile)
       setYoutubeLink('')
       setError('')
+      
+      // Start upload automatically
+      await handleUpload(selectedFile)
     }
+  }, [])
+
+  // Add upload handler
+  const handleUpload = useCallback(async (fileToUpload: File) => {
+    const formData = new FormData()
+    formData.append('file', fileToUpload)
+    formData.append('language', selectedLanguage)
+
+    setUploadState(prev => ({ ...prev, isUploading: true, status: 'uploading' }))
+    setError('')
+
+    const xhr = new XMLHttpRequest()
+    uploadRef.current = xhr
+
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        const progress = (event.loaded / event.total) * 100
+        const speed = formatSpeed(event.loaded, event.timeStamp)
+        setUploadState(prev => ({
+          ...prev,
+          progress,
+          speed,
+          status: 'uploading'
+        }))
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      if (xhr.status === 200) {
+        try {
+          const response = JSON.parse(xhr.responseText)
+          setUploadState(prev => ({
+            ...prev,
+            status: 'complete',
+            isUploading: false,
+            uploadId: response.uploadId
+          }))
+        } catch (e) {
+          setError('Failed to parse server response')
+          setUploadState(prev => ({
+            ...prev,
+            status: 'error',
+            isUploading: false
+          }))
+        }
+      } else {
+        setError('Upload failed')
+        setUploadState(prev => ({
+          ...prev,
+          status: 'error',
+          isUploading: false
+        }))
+      }
+    })
+
+    xhr.addEventListener('error', () => {
+      setError('Upload failed')
+      setUploadState(prev => ({
+        ...prev,
+        status: 'error',
+        isUploading: false
+      }))
+    })
+
+    xhr.open('POST', '/api/upload')
+    xhr.send(formData)
+  }, [selectedLanguage])
+
+  // Add cancel upload handler
+  const handleCancelUpload = useCallback(() => {
+    if (uploadRef.current) {
+      uploadRef.current.abort()
+      uploadRef.current = null
+    }
+  }, [])
+
+  // Add helper function for formatting upload speed
+  const formatSpeed = (loaded: number, timestamp: number): string => {
+    const elapsed = timestamp / 1000 // Convert to seconds
+    const bps = loaded / elapsed
+    const mbps = bps / (1024 * 1024)
+    return `${mbps.toFixed(2)} MB/s`
   }
 
   // Update handleYoutubeLinkChange to fetch title
@@ -238,8 +370,8 @@ export default function Component({ showDebug = false }: Props) {
       resetProgress()
 
       const formData = new FormData()
-      if (file) {
-        formData.append('file', file)
+      if (uploadState.uploadId) {
+        formData.append('uploadId', uploadState.uploadId)
       } else if (youtubeLink) {
         formData.append('youtubeLink', youtubeLink)
       }
@@ -374,6 +506,78 @@ export default function Component({ showDebug = false }: Props) {
     </div>
   )
 
+  // Update the FileUpload component
+  const FileUpload = () => (
+    <div className="space-y-4">
+      {uploadState.status === 'idle' ? (
+        <div className="flex items-center justify-center w-full">
+          <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+              <Upload className="w-8 h-8 mb-4 text-gray-500" />
+              <p className="mb-2 text-sm text-gray-500">
+                <span className="font-semibold">Click to upload</span> or drag and drop
+              </p>
+              <p className="text-xs text-gray-500">MP4, WebM, OGG, or MOV (MAX. 500MB)</p>
+            </div>
+            <Input 
+              id="dropzone-file" 
+              type="file" 
+              className="hidden" 
+              onChange={handleFileChange} 
+              accept="video/mp4,video/webm,video/ogg,video/quicktime" 
+            />
+          </label>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="text-sm font-medium">
+              {uploadState.status === 'complete' 
+                ? 'Upload Complete' 
+                : uploadState.status === 'uploading'
+                ? 'Uploading video...'
+                : 'Upload Failed'}
+            </span>
+            {uploadState.status === 'uploading' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelUpload}
+                className="h-8 px-2"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+          {uploadState.status === 'uploading' ? (
+            <>
+              <Progress value={uploadState.progress} />
+              <div className="text-sm text-muted-foreground">
+                Upload speed: {uploadState.speed}
+              </div>
+            </>
+          ) : uploadState.status === 'complete' ? (
+            <div className="flex items-center space-x-2 text-green-600">
+              <CheckCircle className="h-5 w-5" />
+              <span>Ready for transcription</span>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {file && !uploadState.isUploading && (
+        <p className="mt-2 text-sm text-gray-500">Selected file: {file.name}</p>
+      )}
+    </div>
+  )
+
   return (
     <Card className="w-full max-w-3xl mx-auto">
       <CardHeader>
@@ -415,26 +619,8 @@ export default function Component({ showDebug = false }: Props) {
                 YouTube Link
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="upload">
-              <div className="flex items-center justify-center w-full">
-                <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-8 h-8 mb-4 text-gray-500" />
-                    <p className="mb-2 text-sm text-gray-500">
-                      <span className="font-semibold">Click to upload</span> or drag and drop
-                    </p>
-                    <p className="text-xs text-gray-500">MP4, WebM or OGG (MAX. 800MB)</p>
-                  </div>
-                  <Input 
-                    id="dropzone-file" 
-                    type="file" 
-                    className="hidden" 
-                    onChange={handleFileChange} 
-                    accept="video/*" 
-                  />
-                </label>
-              </div>
-              {file && <p className="mt-2 text-sm text-gray-500">Selected file: {file.name}</p>}
+            <TabsContent value="upload" className="pt-4">
+              <FileUpload />
             </TabsContent>
             <TabsContent value="youtube" className="pt-4">
               <YouTubeInput />
@@ -445,7 +631,7 @@ export default function Component({ showDebug = false }: Props) {
       <CardFooter className="flex flex-col items-center space-y-4">
         <Button 
           onClick={startTranscription} 
-          disabled={isTranscribing || (!file && (!youtubeLink || !!error))}
+          disabled={isTranscribing || (activeTab === 'upload' && uploadState.status !== 'complete') || (activeTab === 'youtube' && (!youtubeLink || !!error))}
           className="w-full"
         >
           <Play className="w-4 h-4 mr-2" />
@@ -503,4 +689,4 @@ export default function Component({ showDebug = false }: Props) {
       </CardFooter>
     </Card>
   )
-} 
+}

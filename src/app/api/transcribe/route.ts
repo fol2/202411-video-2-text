@@ -106,7 +106,7 @@ function parseYoutubeProgress(line: string): {
 
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder()
-  
+
   return new Response(
     new ReadableStream({
       async start(controller) {
@@ -117,49 +117,155 @@ export async function POST(request: NextRequest) {
             sendSSEMessage(encoder, controller, {
               type: 'error',
               code: ERROR_TYPES.PYTHON_ENV_ERROR,
-              message: 'Python environment is not properly set up. Please check requirements.'
+              message: 'Python environment is not properly set up'
             })
             controller.close()
             return
           }
 
           const formData = await request.formData()
-          const file = formData.get('file') as File | null
+          const uploadId = formData.get('uploadId') as string | null
           const youtubeLink = formData.get('youtubeLink') as string | null
           const language = formData.get('language') as string || 'auto'
 
-          // Add file size check
-          if (file && file.size > MAX_FILE_SIZE) {
+          if (!uploadId && !youtubeLink) {
             sendSSEMessage(encoder, controller, {
               type: 'error',
-              code: ERROR_TYPES.PAYLOAD_TOO_LARGE,
-              message: 'File size exceeds maximum limit of 100MB'
+              message: 'No upload ID or YouTube link provided'
             })
             controller.close()
             return
           }
 
-          if (!file && !youtubeLink) {
-            sendSSEMessage(encoder, controller, {
-              type: 'error',
-              message: 'No file or YouTube link provided'
-            })
-            controller.close()
-            return
-          }
-
-          // Setup directories using Python script
+          // Setup directories
           console.log('Setting up directories...')
-          const tmpDir = path.join(os.tmpdir(), `vid2cleantxt_${Date.now()}`)
-          fs.mkdirSync(tmpDir, { recursive: true })
-          console.log('Directories created:', { input_dir: tmpDir, output_dir: tmpDir })
+          const tmpDir = uploadId 
+            ? join(process.cwd(), 'temp_uploads', uploadId)
+            : join(os.tmpdir(), `vid2cleantxt_${Date.now()}`)
 
-          let audioPath: string
+          if (!uploadId) {
+            fs.mkdirSync(tmpDir, { recursive: true })
+          }
 
-          if (file) {
-            const buffer = await file.arrayBuffer()
-            audioPath = join(tmpDir, file.name)
-            await writeFile(audioPath, Buffer.from(buffer))
+          let videoPath: string
+
+          if (uploadId) {
+            // Handle uploaded file transcription
+            const files = await readdir(tmpDir)
+            const videoFile = files.find(f => f.startsWith('video.'))
+            if (!videoFile) {
+              throw new Error('Video file not found in upload directory')
+            }
+            videoPath = join(tmpDir, videoFile)
+
+            // Start transcription
+            sendSSEMessage(encoder, controller, {
+              type: 'status',
+              message: 'Starting transcription...'
+            })
+
+            const transcriptionProcess = spawn('python3', [
+              TRANSCRIBE_SCRIPT,
+              tmpDir,
+              language
+            ], {
+              stdio: ['pipe', 'pipe', 'pipe'],
+              env: {
+                ...process.env,
+                PYTHONPATH: process.env.PYTHONPATH || '',
+                TRANSFORMERS_CACHE: join(process.cwd(), '.cache', 'huggingface'),
+                NEUSPELL_DATA: join(process.cwd(), '.cache', 'neuspell_data'),
+                TORCH_HOME: join(process.cwd(), '.cache', 'torch'),
+              }
+            })
+
+            let accumulatedJson = ''
+            let isCollectingJson = false
+
+            transcriptionProcess.stdout.on('data', (data) => {
+              const output = data.toString()
+              console.log('Transcribe stdout:', output)
+              
+              if (output.includes('JSON_OUTPUT_START')) {
+                isCollectingJson = true
+                return
+              }
+              
+              if (output.includes('JSON_OUTPUT_END')) {
+                isCollectingJson = false
+                try {
+                  const result = JSON.parse(accumulatedJson)
+                  sendSSEMessage(encoder, controller, {
+                    type: 'complete',
+                    transcription: result
+                  })
+                } catch (e) {
+                  console.error('JSON parse error:', e)
+                  sendSSEMessage(encoder, controller, {
+                    type: 'error',
+                    message: 'Failed to parse transcription result'
+                  })
+                }
+                return
+              }
+
+              if (isCollectingJson && output.startsWith('CHUNK:')) {
+                accumulatedJson += output.slice(6)
+                return
+              }
+
+              // Send regular output as log message
+              sendSSEMessage(encoder, controller, {
+                type: 'log',
+                message: output.trim()
+              })
+            })
+
+            transcriptionProcess.stderr.on('data', (data) => {
+              const error = data.toString()
+              console.error('Transcribe stderr:', error)
+              
+              // Handle progress updates
+              const progress = parseProgress(error)
+              if (progress !== null) {
+                sendSSEMessage(encoder, controller, {
+                  type: 'progress',
+                  progress,
+                  message: error.trim()
+                })
+                return
+              }
+              
+              // Handle other messages
+              if (!error.includes('%|')) {
+                sendSSEMessage(encoder, controller, {
+                  type: 'log',
+                  message: error.trim()
+                })
+              }
+            })
+
+            // Wait for transcription to complete
+            await new Promise((resolve, reject) => {
+              transcriptionProcess.on('close', (code) => {
+                if (code === 0) {
+                  resolve(null)
+                } else {
+                  reject(new Error(`Transcription process exited with code ${code}`))
+                }
+              })
+
+              transcriptionProcess.on('error', (err) => {
+                reject(new Error(`Failed to start transcription process: ${err.message}`))
+              })
+            })
+
+            // Clean up temp files
+            await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}');"`)
+
+            controller.close()
+            return
+
           } else if (youtubeLink) {
             sendSSEMessage(encoder, controller, {
               type: 'status',
@@ -247,7 +353,7 @@ export async function POST(request: NextRequest) {
                 })
               })
 
-              audioPath = downloadResult as string
+              videoPath = downloadResult as string
 
               // Start transcription with language parameter
               sendSSEMessage(encoder, controller, {
@@ -255,7 +361,7 @@ export async function POST(request: NextRequest) {
                 message: 'Starting transcription...'
               })
 
-              const transcribeProcess = spawn('python3', [
+              const transcriptionProcess = spawn('python3', [
                 TRANSCRIBE_SCRIPT,
                 tmpDir,
                 language
@@ -273,7 +379,7 @@ export async function POST(request: NextRequest) {
               let accumulatedJson = ''
               let isCollectingJson = false
 
-              transcribeProcess.stdout.on('data', (data) => {
+              transcriptionProcess.stdout.on('data', (data) => {
                 const output = data.toString()
                 console.log('Transcribe stdout:', output)
                 
@@ -312,7 +418,7 @@ export async function POST(request: NextRequest) {
                 })
               })
 
-              transcribeProcess.stderr.on('data', (data) => {
+              transcriptionProcess.stderr.on('data', (data) => {
                 const error = data.toString()
                 console.error('Transcribe stderr:', error)
                 
@@ -338,7 +444,7 @@ export async function POST(request: NextRequest) {
 
               // Wait for transcription to complete
               await new Promise((resolve, reject) => {
-                transcribeProcess.on('close', (code) => {
+                transcriptionProcess.on('close', (code) => {
                   if (code === 0) {
                     resolve(null)
                   } else {
@@ -346,7 +452,7 @@ export async function POST(request: NextRequest) {
                   }
                 })
 
-                transcribeProcess.on('error', (err) => {
+                transcriptionProcess.on('error', (err) => {
                   reject(new Error(`Failed to start transcription process: ${err.message}`))
                 })
               })
@@ -374,32 +480,15 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          console.log('Checking if audio file exists at:', audioPath!)
+          console.log('Checking if video file exists at:', videoPath!)
           try {
-            await readFile(audioPath!)
-            console.log('Audio file exists and is readable')
+            await readFile(videoPath!)
+            console.log('Video file exists and is readable')
           } catch (error) {
-            console.error('Audio file check error:', error)
-            throw new Error('Audio file not found or not accessible')
+            console.error('Video file check error:', error)
+            throw new Error('Video file not found or not accessible')
           }
 
-          // Make the API call to Hugging Face
-          const audioData = await readFile(audioPath!)
-          const response = await fetch(process.env.HF_API_ENDPOINT!, {
-            headers: {
-              Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-              'Content-Type': 'audio/mpeg',
-            },
-            method: "POST",
-            body: audioData,
-          })
-
-          if (!response.ok) {
-            throw new Error(`Transcription failed: ${response.statusText}`)
-          }
-
-          const result = await response.json()
-          
           // Clean up temp files
           await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}'); shutil.rmtree('${tmpDir}')"`)
           
@@ -410,11 +499,10 @@ export async function POST(request: NextRequest) {
 
           controller.close()
         } catch (error) {
-          console.error('Server error:', error)
+          console.error('Error during transcription:', error)
           sendSSEMessage(encoder, controller, {
             type: 'error',
-            code: ERROR_TYPES.TRANSCRIPTION_ERROR,
-            message: error instanceof Error ? error.message : 'Unknown server error'
+            message: error instanceof Error ? error.message : 'Unknown error occurred'
           })
           controller.close()
         }
