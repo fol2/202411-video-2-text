@@ -69,6 +69,8 @@ export interface TranscriptionResult {
     model?: string
     processingTime?: number
     wordCount?: number
+    title?: string
+    youtubeUrl?: string
     [key: string]: any
   }
 }
@@ -231,6 +233,16 @@ const useSSEConnection = (
 
   return { connect, cleanup };
 };
+
+// First, add the SSEMessage type definition at the top
+interface SSEMessage {
+  type: 'progress' | 'status' | 'log' | 'error' | 'complete';
+  message: string;
+  transcription?: string;
+  progress?: number;
+  detectedLanguage?: string;
+  metadata?: Record<string, any>;
+}
 
 export default function Component({ showDebug = false, onTranscriptionComplete }: Props) {
   const [file, setFile] = useState<File | null>(null)
@@ -458,32 +470,30 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
           text: data.transcription,
           createdAt: timestamp,
           metadata: {
+            title: videoTitle || (file?.name || 'Untitled Video'),
+            youtubeUrl: youtubeLink || undefined,
             language: selectedLanguage !== 'auto' ? selectedLanguage : data.detectedLanguage,
             processingTime: ((Date.now() - startTime.current) / 1000),
             model: 'whisper-large-v3',
             transcribedAt: timestamp,
             ...data.metadata
           }
-        }
-        setTranscriptionResult(result)
-        setTranscription(data.transcription)
-        setIsTranscribing(false)
-        addLog('Transcription complete!')
+        };
+        setTranscriptionResult(result);
+        setTranscription(data.transcription);
+        setIsTranscribing(false);
+        addLog('Transcription complete!');
         
         // Start save and animation sequence
         if (HistoryManager.addTranscription(result)) {
-          addLog('Transcription saved to history')
-          setIsAnimatingToHistory(true)
+          addLog('Transcription saved to history');
+          setIsAnimatingToHistory(true);
           
-          // After animation completes
           setTimeout(() => {
-            setIsAnimatingToHistory(false)
-            onTranscriptionComplete?.(result)
-          }, 800) // Match animation duration
-        } else {
-          addLog('Failed to save transcription to history')
+            setIsAnimatingToHistory(false);
+            onTranscriptionComplete?.(result);
+          }, 1000);
         }
-        
         break;
       
       case 'error':
