@@ -6,9 +6,12 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Link, Play, AlertCircle, X, CheckCircle } from 'lucide-react'
+import { Upload, Link, Play, AlertCircle, X, CheckCircle, Loader } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import TranscriptionResults from '@/components/TranscriptionResults'
+import HistoryManager from '@/lib/historyManager'
+import { motion, AnimatePresence } from 'framer-motion'
 
 // Language options based on Whisper's supported languages
 const LANGUAGE_OPTIONS = [
@@ -55,6 +58,21 @@ interface DetailedProgress {
   stepsPerSecond?: string
 }
 
+// Add TranscriptionResult interface
+export interface TranscriptionResult {
+  text: string
+  keywords?: string[]
+  metadata?: {
+    duration?: number
+    language?: string
+    confidence?: number
+    model?: string
+    processingTime?: number
+    wordCount?: number
+    [key: string]: any
+  }
+}
+
 // Add a custom hook to handle progress updates
 const useProgress = () => {
   const [progress, setProgress] = useState(0)
@@ -87,6 +105,7 @@ const useProgress = () => {
 
 interface Props {
   showDebug?: boolean
+  onTranscriptionComplete?: (result: TranscriptionResult) => void
 }
 
 // Add this function near the top with other utility functions
@@ -126,7 +145,87 @@ interface UploadState {
   uploadId?: string  // Add this to store the upload ID
 }
 
-export default function Component({ showDebug = false }: Props) {
+// Add type definitions for SSE messages (matching server types)
+type SSEMessageType = 'progress' | 'status' | 'log' | 'error' | 'complete';
+
+interface BaseSSEMessage {
+  type: SSEMessageType;
+  message: string;
+  timestamp?: string;
+}
+
+// ... (add other message type interfaces matching server)
+
+// Add SSE connection management
+const useSSEConnection = (
+  url: string,
+  options: {
+    onMessage: (message: SSEMessage) => void;
+    onError: (error: Error) => void;
+    onComplete: () => void;
+  }
+) => {
+  const eventSourceRef = useRef<EventSource | null>(null);
+
+  const cleanup = useCallback(() => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }, []);
+
+  const connect = useCallback(
+    (params: URLSearchParams) => {
+      cleanup();
+
+      const fullUrl = `${url}?${params.toString()}`;
+      const eventSource = new EventSource(fullUrl);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as SSEMessage;
+          options.onMessage(message);
+
+          if (message.type === 'complete') {
+            cleanup();
+            options.onComplete();
+          }
+        } catch (error) {
+          options.onError(new Error('Failed to parse SSE message'));
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        cleanup();
+        options.onError(error instanceof Error ? error : new Error('SSE connection error'));
+      };
+
+      // Add connection timeout
+      const timeout = setTimeout(() => {
+        if (eventSourceRef.current) {
+          cleanup();
+          options.onError(new Error('Connection timed out'));
+        }
+      }, 30000); // 30 second timeout
+
+      return () => {
+        clearTimeout(timeout);
+        cleanup();
+      };
+    },
+    [url, options, cleanup]
+  );
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
+
+  return { connect, cleanup };
+};
+
+export default function Component({ showDebug = false, onTranscriptionComplete }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [youtubeLink, setYoutubeLink] = useState('')
   const [isTranscribing, setIsTranscribing] = useState(false)
@@ -136,8 +235,14 @@ export default function Component({ showDebug = false }: Props) {
   const [selectedLanguage, setSelectedLanguage] = useState('auto')
   const [activeTab, setActiveTab] = useState('upload')
   const [videoTitle, setVideoTitle] = useState<string | null>(null)
+  const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null)
+  const [isTranscriptionVisible, setIsTranscriptionVisible] = useState(true)
+  const [isBoxVisible, setIsBoxVisible] = useState(true)
+  const [isAnimatingToHistory, setIsAnimatingToHistory] = useState(false)
 
+  const startTime = useRef<number>(Date.now())
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const uploadRef = useRef<XMLHttpRequest | null>(null)
 
   // Use the custom hook
   const { progress, status, details, updateProgress, resetProgress } = useProgress()
@@ -155,7 +260,6 @@ export default function Component({ showDebug = false }: Props) {
     status: 'idle',
     isUploading: false
   })
-  const uploadRef = useRef<XMLHttpRequest | null>(null)
 
   // Add beforeunload handler
   useEffect(() => {
@@ -310,8 +414,8 @@ export default function Component({ showDebug = false }: Props) {
     setLogs(prev => [...prev, message])
   }, [])
 
+  // Update handleServerMessage function
   const handleServerMessage = (data: any) => {
-    // Always log to console for development purposes
     console.log('Server message:', data)
     
     switch (data.type) {
@@ -341,10 +445,39 @@ export default function Component({ showDebug = false }: Props) {
         break
       
       case 'complete':
+        const timestamp = new Date().toISOString();
+        const result: TranscriptionResult = {
+          id: crypto.randomUUID(),
+          text: data.transcription,
+          createdAt: timestamp,
+          metadata: {
+            language: selectedLanguage !== 'auto' ? selectedLanguage : data.detectedLanguage,
+            processingTime: ((Date.now() - startTime.current) / 1000),
+            model: 'whisper-large-v3',
+            transcribedAt: timestamp,
+            ...data.metadata
+          }
+        }
+        setTranscriptionResult(result)
         setTranscription(data.transcription)
         setIsTranscribing(false)
         addLog('Transcription complete!')
-        break
+        
+        // Start save and animation sequence
+        if (HistoryManager.addTranscription(result)) {
+          addLog('Transcription saved to history')
+          setIsAnimatingToHistory(true)
+          
+          // After animation completes
+          setTimeout(() => {
+            setIsAnimatingToHistory(false)
+            onTranscriptionComplete?.(result)
+          }, 800) // Match animation duration
+        } else {
+          addLog('Failed to save transcription to history')
+        }
+        
+        break;
       
       case 'error':
         setError(data.message)
@@ -578,6 +711,88 @@ export default function Component({ showDebug = false }: Props) {
     </div>
   )
 
+  useEffect(() => {
+    return () => {
+      // Cleanup on unmount
+      if (uploadRef.current) {
+        uploadRef.current.abort()
+      }
+      // Reset states
+      setTranscriptionResult(null)
+      setError('')
+      setLogs([])
+    }
+  }, [])
+
+  const handleRetry = useCallback(() => {
+    setError('')
+    setTranscriptionResult(null)
+    startTranscription()
+  }, [startTranscription])
+
+  const validateFile = (file: File) => {
+    const maxSize = 500 * 1024 * 1024 // 500MB
+    if (file.size > maxSize) {
+      throw new Error('File size exceeds 500MB limit')
+    }
+    
+    const validTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime']
+    if (!validTypes.includes(file.type)) {
+      throw new Error('Invalid file type. Please upload MP4, WebM, OGG, or MOV files only.')
+    }
+  }
+
+  // Reset states when starting new transcription
+  useEffect(() => {
+    if (isTranscribing) {
+      setTranscriptionResult(null)  // Clear any previous result
+      setIsTranscriptionVisible(true)
+      setIsBoxVisible(true)
+    }
+  }, [isTranscribing])
+
+  // Load visibility preferences only when we have a new transcription
+  useEffect(() => {
+    if (transcriptionResult?.id && !isTranscribing) {  // Only for new transcriptions
+      setIsTranscriptionVisible(true)
+      setIsBoxVisible(true)
+    }
+  }, [transcriptionResult?.id, isTranscribing])
+
+  // Save visibility preferences
+  useEffect(() => {
+    if (transcriptionResult?.id) {
+      localStorage.setItem(
+        `transcription-prefs-${transcriptionResult.id}`,
+        JSON.stringify({
+          isVisible: isTranscriptionVisible,
+          isBoxVisible: isBoxVisible
+        })
+      )
+    }
+  }, [transcriptionResult?.id, isTranscriptionVisible, isBoxVisible])
+
+  // Handle box removal
+  const handleRemoveBox = useCallback(() => {
+    setIsBoxVisible(false)
+  }, [])
+
+  // Get reference to the History tab for animation
+  const historyTabRef = useRef<HTMLDivElement>(null)
+
+  // Handle transcription completion with animation
+  const handleTranscriptionSuccess = useCallback((result: TranscriptionResult) => {
+    // Start animation sequence
+    setIsAnimatingToHistory(true)
+    
+    // Sequence the animations
+    setTimeout(() => {
+      setIsAnimatingToHistory(false)
+      // Call the parent handler after animation
+      onTranscriptionComplete?.(result)
+    }, 1000) // Match this with animation duration
+  }, [onTranscriptionComplete])
+
   return (
     <Card className="w-full max-w-3xl mx-auto">
       <CardHeader>
@@ -632,24 +847,92 @@ export default function Component({ showDebug = false }: Props) {
         <Button 
           onClick={startTranscription} 
           disabled={isTranscribing || (activeTab === 'upload' && uploadState.status !== 'complete') || (activeTab === 'youtube' && (!youtubeLink || !!error))}
-          className="w-full"
+          className="w-full relative"
         >
-          <Play className="w-4 h-4 mr-2" />
-          {isTranscribing ? 'Transcribing...' : 'Start Transcription'}
+          {isTranscribing ? (
+            <>
+              <Loader className="w-4 h-4 mr-2 animate-spin" />
+              Transcribing...
+            </>
+          ) : (
+            <>
+              <Play className="w-4 h-4 mr-2" />
+              Start Transcription
+            </>
+          )}
         </Button>
 
         {isTranscribing && (
-          <ProgressDisplay 
-            value={progress} 
-            status={status} 
-            details={details}
-          />
+          <div className="w-full space-y-4">
+            <ProgressDisplay 
+              value={progress} 
+              status={status} 
+              details={details}
+            />
+            <p className="text-sm text-muted-foreground text-center">
+              This may take a few minutes depending on the video length
+            </p>
+          </div>
         )}
 
-        {transcription && (
-          <div className="mt-4 border rounded-lg p-4 w-full">
-            <h3 className="text-lg font-semibold mb-2">Transcription</h3>
-            <p className="whitespace-pre-wrap">{transcription}</p>
+        {error && (
+          <Alert variant="destructive" className="w-full">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={handleRetry}
+              className="mt-2"
+            >
+              Retry Transcription
+            </Button>
+          </Alert>
+        )}
+
+        {transcriptionResult && isBoxVisible && (
+          <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
+            <TranscriptionResults 
+              result={transcriptionResult} 
+              isVisible={isTranscriptionVisible}
+              onVisibilityChange={setIsTranscriptionVisible}
+              onRemove={handleRemoveBox}
+            />
+            
+            {/* Flying animation element */}
+            <AnimatePresence>
+              {isAnimatingToHistory && (
+                <motion.div
+                  initial={{ 
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    scale: 1,
+                    opacity: 0.8,
+                    zIndex: 50,
+                    pointerEvents: 'none'
+                  }}
+                  animate={{
+                    top: historyTabRef.current?.getBoundingClientRect().top ?? 0,
+                    left: historyTabRef.current?.getBoundingClientRect().left ?? 0,
+                    scale: 0.1,
+                    opacity: 0
+                  }}
+                  exit={{ opacity: 0 }}
+                  transition={{
+                    duration: 0.8,
+                    ease: 'easeInOut'
+                  }}
+                  className="pointer-events-none"
+                >
+                  <div className="bg-white rounded-lg border p-4 shadow-lg">
+                    <div className="h-20 w-full bg-gray-50 animate-pulse" />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
@@ -670,22 +953,19 @@ export default function Component({ showDebug = false }: Props) {
           </div>
         )}
 
-        {/* Debug console at the bottom */}
-        <div 
-          className={cn(
-            "mt-4 border rounded-lg p-4 bg-black text-white w-full",
-            !showDebug && "hidden" // Hide with CSS when debug is off
-          )}
-        >
-          <div className="font-mono text-sm h-64 overflow-auto">
-            {logs.map((log, i) => (
-              <div key={i} className="whitespace-pre-wrap text-green-400">
-                {`[${new Date().toLocaleTimeString()}] ${log}`}
-              </div>
-            ))}
-            <div ref={logsEndRef} />
+        {/* Debug console */}
+        {showDebug && (
+          <div className="mt-4 border rounded-lg p-4 bg-black text-white w-full">
+            <div className="font-mono text-sm h-64 overflow-auto">
+              {logs.map((log, i) => (
+                <div key={i} className="whitespace-pre-wrap text-green-400">
+                  {`[${new Date().toLocaleTimeString()}] ${log}`}
+                </div>
+              ))}
+              <div ref={logsEndRef} />
+            </div>
           </div>
-        </div>
+        )}
       </CardFooter>
     </Card>
   )

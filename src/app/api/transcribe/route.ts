@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { exec, spawn } from 'child_process'
 import { promisify } from 'util'
 import { join } from 'path'
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, mkdir } from 'fs/promises'
 import { readdir } from 'fs/promises'
 import { headers } from 'next/headers'
 import path from 'path'
@@ -28,6 +28,56 @@ const ERROR_TYPES = {
 // Add size limits
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
+// Add logger configuration at the top with other imports
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+interface LogMessage {
+  level: LogLevel;
+  message: string;
+  timestamp: string;
+  data?: any;
+}
+
+const logger = {
+  debug: (message: string, data?: any) => log('debug', message, data),
+  info: (message: string, data?: any) => log('info', message, data),
+  warn: (message: string, data?: any) => log('warn', message, data),
+  error: (message: string, data?: any) => log('error', message, data)
+};
+
+function log(level: LogLevel, message: string, data?: any) {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const timestamp = new Date().toISOString();
+  
+  const logMessage: LogMessage = {
+    level,
+    message,
+    timestamp,
+    ...(data && { data })
+  };
+
+  // In production, only log info and above
+  if (isProduction && level === 'debug') return;
+
+  // Format the log message
+  const formattedMessage = `[${timestamp}] ${level.toUpperCase()}: ${message}`;
+  
+  switch (level) {
+    case 'debug':
+      console.debug(formattedMessage, data || '');
+      break;
+    case 'info':
+      console.info(formattedMessage, data || '');
+      break;
+    case 'warn':
+      console.warn(formattedMessage, data || '');
+      break;
+    case 'error':
+      console.error(formattedMessage, data || '');
+      break;
+  }
+}
+
 async function checkPythonEnvironment() {
   try {
     // Check for all required packages
@@ -36,12 +86,12 @@ async function checkPythonEnvironment() {
     const missingPackages = requiredPackages.filter(pkg => !stdout.includes(pkg))
     
     if (missingPackages.length > 0) {
-      throw new Error(`Missing required packages: ${missingPackages.join(', ')}. Please install using: pip3 install ${missingPackages.join(' ')}`)
+      throw new Error(`Missing required packages: ${missingPackages.join(', ')}`)
     }
     
     return true
   } catch (error) {
-    console.error('Python environment check failed:', error)
+    logger.error('Python environment check failed:', { error })
     return false
   }
 }
@@ -74,9 +124,92 @@ function parseLogOutput(line: string): { type: string; level?: string; message?:
   return null
 }
 
-// Helper function to send SSE messages
-function sendSSEMessage(encoder: TextEncoder, controller: ReadableStreamDefaultController, data: any) {
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+// Add type definitions for SSE messages
+type SSEMessageType = 'progress' | 'status' | 'log' | 'error' | 'complete';
+
+interface BaseSSEMessage {
+  type: SSEMessageType;
+  message: string;
+  timestamp?: string;
+}
+
+interface ProgressSSEMessage extends BaseSSEMessage {
+  type: 'progress';
+  progress: number;
+  speed?: string;
+  eta?: string;
+  currentStep?: string;
+  totalSteps?: string;
+  visualBar?: string;
+}
+
+interface ErrorSSEMessage extends BaseSSEMessage {
+  type: 'error';
+  code: keyof typeof ERROR_TYPES;
+  details?: Record<string, unknown>;
+}
+
+interface CompleteSSEMessage extends BaseSSEMessage {
+  type: 'complete';
+  transcription: string;
+  metadata?: {
+    language?: string;
+    confidence?: number;
+    duration?: number;
+  };
+}
+
+type SSEMessage = BaseSSEMessage | ProgressSSEMessage | ErrorSSEMessage | CompleteSSEMessage;
+
+// Update the sendSSEMessage function to handle message types
+function sendSSEMessage(
+  encoder: TextEncoder,
+  controller: ReadableStreamDefaultController,
+  message: SSEMessage
+) {
+  const timestamp = new Date().toISOString();
+  const data = {
+    ...message,
+    timestamp,
+  };
+
+  try {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+  } catch (error) {
+    logger.error('Failed to send SSE message:', { error, message });
+    // Attempt to send error message if possible
+    try {
+      controller.enqueue(
+        encoder.encode(
+          `data: ${JSON.stringify({
+            type: 'error',
+            message: 'Failed to send message',
+            timestamp,
+          })}\n\n`
+        )
+      );
+    } catch {
+      // If we can't send any messages, just log the error
+      logger.error('Failed to send error message through SSE');
+    }
+  }
+}
+
+// Add connection cleanup helper
+function cleanupSSEConnection(
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder
+) {
+  try {
+    // Send final message before closing
+    sendSSEMessage(encoder, controller, {
+      type: 'status',
+      message: 'Connection closing',
+    });
+    controller.close();
+  } catch (error) {
+    logger.error('Error during SSE connection cleanup:', { error });
+  }
 }
 
 // Helper function to parse progress from stderr
@@ -85,69 +218,315 @@ function parseProgress(line: string): number | null {
   return match ? parseInt(match[1]) : null
 }
 
-// Update the parseYoutubeProgress function to include more details
+// Update the parseYoutubeProgress function to handle more formats
 function parseYoutubeProgress(line: string): { 
   progress: number; 
-  speed: string; 
-  eta: string;
+  speed?: string; 
+  eta?: string;
   timeElapsed?: string;
+  size?: string;
 } | null {
-  const match = line.match(/PROGRESS:(\d+\.?\d*)\|([^|]+)\|(\d+:\d+)\|([^|]+)?/)
-  if (match) {
+  // Handle different progress line formats
+  
+  // Format 1: [download] 23.4% of 50.23MiB at 2.35MiB/s ETA 00:15
+  const downloadMatch = line.match(
+    /\[download\]\s+(\d+\.?\d*)%\s+of\s+([^\s]+)\s+at\s+([^\s]+)\s+ETA\s+(\d+:\d+)/
+  )
+  if (downloadMatch) {
     return {
-      progress: parseFloat(match[1]),
-      speed: match[2],
-      eta: match[3],
-      timeElapsed: match[4] || undefined
+      progress: parseFloat(downloadMatch[1]),
+      size: downloadMatch[2],
+      speed: downloadMatch[3],
+      eta: downloadMatch[4]
     }
   }
+
+  // Format 2: PROGRESS:45.5|2.5MiB/s|01:30|02:15
+  const progressMatch = line.match(
+    /PROGRESS:(\d+\.?\d*)\|([^|]+)\|([^|]+)(?:\|([^|]+))?/
+  )
+  if (progressMatch) {
+    return {
+      progress: parseFloat(progressMatch[1]),
+      speed: progressMatch[2],
+      eta: progressMatch[3],
+      timeElapsed: progressMatch[4]
+    }
+  }
+
+  // Format 3: [ffmpeg] 67.5% done
+  const ffmpegMatch = line.match(/\[ffmpeg\]\s+(\d+\.?\d*)%\s+done/)
+  if (ffmpegMatch) {
+    return {
+      progress: parseFloat(ffmpegMatch[1])
+    }
+  }
+
   return null
 }
 
+// Add this helper function
+async function readTranscriptionFile(outputDir: string): Promise<string> {
+  const files = await readdir(outputDir)
+  const transcriptionFile = files.find(f => f.endsWith('.txt'))
+  if (!transcriptionFile) {
+    throw new Error('Transcription file not found')
+  }
+  return await readFile(join(outputDir, transcriptionFile), 'utf-8')
+}
+
+async function ensureCacheDirectories(): Promise<void> {
+  const cacheDirectories = [
+    ['.cache', 'huggingface'],
+    ['.cache', 'neuspell_data'],
+    ['.cache', 'torch']
+  ]
+
+  try {
+    for (const pathSegments of cacheDirectories) {
+      const cachePath = join(process.cwd(), ...pathSegments)
+      await mkdir(cachePath, { recursive: true })
+      
+      // Verify write permissions by attempting to create a test file
+      const testFile = join(cachePath, '.write-test')
+      try {
+        await writeFile(testFile, '')
+        await fs.promises.unlink(testFile)
+      } catch (error) {
+        throw new Error(`Cache directory ${cachePath} is not writable: ${error.message}`)
+      }
+    }
+  } catch (error) {
+    console.error('Failed to setup cache directories:', error)
+    throw new Error(`Cache directory setup failed: ${error.message}`)
+  }
+}
+
+const getTranscriptionProcessConfig = () => ({
+  stdio: ['pipe', 'pipe', 'pipe'],
+  env: {
+    ...process.env,
+    PYTHONPATH: process.env.PYTHONPATH || '',
+    TRANSFORMERS_CACHE: join(process.cwd(), '.cache', 'huggingface'),
+    NEUSPELL_DATA: join(process.cwd(), '.cache', 'neuspell_data'),
+    TORCH_HOME: join(process.cwd(), '.cache', 'torch'),
+    // Add any additional environment variables here
+  }
+})
+
+// Add type for process events
+type ProcessEvents = {
+  onData?: (data: Buffer) => void;
+  onError?: (data: Buffer) => void;
+  onClose?: (code: number | null) => void;
+}
+
+// Add helper function to handle process events
+async function handleProcessEvents(
+  process: ReturnType<typeof spawn>,
+  events: ProcessEvents
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let errorOutput = '';
+
+    if (events.onData) {
+      process.stdout?.on('data', events.onData);
+    }
+
+    if (events.onError) {
+      process.stderr?.on('data', (data: Buffer) => {
+        errorOutput += data.toString();
+        events.onError?.(data);
+      });
+    }
+
+    process.on('close', (code: number | null) => {
+      events.onClose?.(code);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Process exited with code ${code}\n${errorOutput}`));
+      }
+    });
+
+    process.on('error', (err: Error) => {
+      reject(new Error(`Failed to start process: ${err.message}`));
+    });
+  });
+}
+
+// Add helper function to safely clean up directory
+async function cleanupDirectory(dir: string): Promise<void> {
+  try {
+    await execAsync(`python3 -c "import shutil; shutil.rmtree('${dir}')"`)
+  } catch (error) {
+    console.error(`Failed to clean up directory ${dir}:`, error)
+    // Don't throw - cleanup errors shouldn't stop the process
+  }
+}
+
+// Add helper function to list directory contents
+async function logDirectoryContents(dir: string, logger: any) {
+  try {
+    const files = await readdir(dir, { withFileTypes: true });
+    const contents = await Promise.all(
+      files.map(async (dirent) => {
+        const fullPath = join(dir, dirent.name);
+        if (dirent.isDirectory()) {
+          const subContents = await logDirectoryContents(fullPath, logger);
+          return `${dirent.name}/\n${subContents.map(s => `  ${s}`).join('\n')}`;
+        }
+        return dirent.name;
+      })
+    );
+    logger.debug('Directory contents:', { dir, contents });
+    return contents;
+  } catch (error) {
+    logger.error('Failed to read directory:', { dir, error });
+    return [];
+  }
+}
+
+// Update handleTranscriptionProcess function
+async function handleTranscriptionProcess(
+  process: ReturnType<typeof spawn>,
+  encoder: TextEncoder,
+  controller: ReadableStreamDefaultController
+): Promise<string> {
+  let accumulatedJson = '';
+  let isCollectingJson = false;
+  let transcriptionResult: string | null = null;
+
+  await handleProcessEvents(process, {
+    onData: (data: Buffer) => {
+      const output = data.toString();
+      logger.debug('Transcribe stdout:', { output });
+
+      // Split output into lines to handle multiple lines in a single 'data' event
+      const lines = output.split('\n');
+      for (const line of lines) {
+        if (line.includes('JSON_OUTPUT_START')) {
+          isCollectingJson = true;
+          accumulatedJson = ''; // Reset accumulated JSON
+          continue;
+        }
+
+        if (line.includes('JSON_OUTPUT_END')) {
+          isCollectingJson = false;
+
+          // Strip 'CHUNK:' prefix if present
+          const jsonString = accumulatedJson.startsWith('CHUNK:')
+            ? accumulatedJson.slice('CHUNK:'.length)
+            : accumulatedJson;
+
+          try {
+            const result = JSON.parse(jsonString);
+            logger.debug('Parsed JSON result:', { result });
+            transcriptionResult = result.text_output_dir;
+            logger.debug('Set transcription result:', { transcriptionResult });
+          } catch (e) {
+            logger.error('JSON parse error:', { error: e, accumulatedJson });
+            throw new Error('Failed to parse transcription result');
+          }
+          continue;
+        }
+
+        if (isCollectingJson) {
+          // Accumulate JSON content line by line
+          accumulatedJson += line.trim();
+          continue;
+        }
+
+        // Handle regular log messages
+        if (line.trim()) {
+          sendSSEMessage(encoder, controller, {
+            type: 'log',
+            message: line.trim(),
+          });
+        }
+      }
+    },
+    onError: (data: Buffer) => {
+      const error = data.toString();
+      logger.debug('Transcribe stderr:', { error });
+      
+      const progress = parseProgress(error);
+      
+      if (progress !== null) {
+        sendSSEMessage(encoder, controller, {
+          type: 'progress',
+          progress,
+          message: error.trim()
+        });
+      } else if (!error.includes('%|')) {
+        sendSSEMessage(encoder, controller, {
+          type: 'log',
+          message: error.trim()
+        });
+      }
+    }
+  });
+
+  if (!transcriptionResult) {
+    logger.error('No transcription result received after process completion');
+    throw new Error('No transcription result received');
+  }
+
+  // Log directory contents after transcription
+  await logDirectoryContents(transcriptionResult, logger);
+
+  return transcriptionResult;
+}
+
+// Add helper function for file size validation
+async function validateFileSize(filePath: string): Promise<void> {
+  try {
+    const stats = await fs.promises.stat(filePath)
+    if (stats.size > MAX_FILE_SIZE) {
+      throw new Error(`File size (${(stats.size / 1024 / 1024).toFixed(1)}MB) exceeds maximum allowed size (${MAX_FILE_SIZE / 1024 / 1024}MB)`)
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`File size validation failed: ${error.message}`)
+    }
+    throw error
+  }
+}
+
 export async function POST(request: NextRequest) {
-  const encoder = new TextEncoder()
+  const encoder = new TextEncoder();
+  let tmpDir: string | null = null;
 
   return new Response(
     new ReadableStream({
       async start(controller) {
         try {
-          // Check Python environment first
-          const isPythonReady = await checkPythonEnvironment()
+          await ensureCacheDirectories();
+          
+          const isPythonReady = await checkPythonEnvironment();
           if (!isPythonReady) {
-            sendSSEMessage(encoder, controller, {
-              type: 'error',
-              code: ERROR_TYPES.PYTHON_ENV_ERROR,
-              message: 'Python environment is not properly set up'
-            })
-            controller.close()
-            return
+            throw new Error('Python environment is not properly set up');
           }
 
-          const formData = await request.formData()
-          const uploadId = formData.get('uploadId') as string | null
-          const youtubeLink = formData.get('youtubeLink') as string | null
-          const language = formData.get('language') as string || 'auto'
+          const formData = await request.formData();
+          const uploadId = formData.get('uploadId') as string | null;
+          const youtubeLink = formData.get('youtubeLink') as string | null;
+          const language = formData.get('language') as string || 'auto';
 
           if (!uploadId && !youtubeLink) {
-            sendSSEMessage(encoder, controller, {
-              type: 'error',
-              message: 'No upload ID or YouTube link provided'
-            })
-            controller.close()
-            return
+            throw new Error('No upload ID or YouTube link provided');
           }
 
-          // Setup directories
-          console.log('Setting up directories...')
-          const tmpDir = uploadId 
-            ? join(process.cwd(), 'temp_uploads', uploadId)
-            : join(os.tmpdir(), `vid2cleantxt_${Date.now()}`)
-
-          if (!uploadId) {
-            fs.mkdirSync(tmpDir, { recursive: true })
+          // Unified tmpDir handling
+          if (uploadId) {
+            tmpDir = join(process.cwd(), 'temp_uploads', uploadId);
+          } else {
+            const uniqueId = `youtube_${Date.now()}`;
+            tmpDir = join(process.cwd(), 'temp_uploads', uniqueId);
           }
+          await mkdir(tmpDir, { recursive: true });
 
-          let videoPath: string
+          let videoPath: string;
 
           if (uploadId) {
             // Handle uploaded file transcription
@@ -158,115 +537,77 @@ export async function POST(request: NextRequest) {
             }
             videoPath = join(tmpDir, videoFile)
 
+            // Add file size validation
+            try {
+              await validateFileSize(videoPath)
+            } catch (error) {
+              sendSSEMessage(encoder, controller, {
+                type: 'error',
+                code: ERROR_TYPES.PAYLOAD_TOO_LARGE,
+                message: error instanceof Error ? error.message : 'File size validation failed'
+              })
+              return
+            }
+
             // Start transcription
             sendSSEMessage(encoder, controller, {
               type: 'status',
               message: 'Starting transcription...'
             })
 
-            const transcriptionProcess = spawn('python3', [
-              TRANSCRIBE_SCRIPT,
+            const transcriptionProcess = spawn(
+              'python3',
+              [TRANSCRIBE_SCRIPT, tmpDir, language],
+              getTranscriptionProcessConfig()
+            );
+
+            logger.debug('Starting transcription process:', { 
+              script: TRANSCRIBE_SCRIPT,
               tmpDir,
-              language
-            ], {
-              stdio: ['pipe', 'pipe', 'pipe'],
-              env: {
-                ...process.env,
-                PYTHONPATH: process.env.PYTHONPATH || '',
-                TRANSFORMERS_CACHE: join(process.cwd(), '.cache', 'huggingface'),
-                NEUSPELL_DATA: join(process.cwd(), '.cache', 'neuspell_data'),
-                TORCH_HOME: join(process.cwd(), '.cache', 'torch'),
-              }
-            })
+              language 
+            });
 
-            let accumulatedJson = ''
-            let isCollectingJson = false
+            // Log initial directory contents
+            await logDirectoryContents(tmpDir, logger);
 
-            transcriptionProcess.stdout.on('data', (data) => {
-              const output = data.toString()
-              console.log('Transcribe stdout:', output)
-              
-              if (output.includes('JSON_OUTPUT_START')) {
-                isCollectingJson = true
-                return
-              }
-              
-              if (output.includes('JSON_OUTPUT_END')) {
-                isCollectingJson = false
-                try {
-                  const result = JSON.parse(accumulatedJson)
-                  sendSSEMessage(encoder, controller, {
-                    type: 'complete',
-                    transcription: result
-                  })
-                } catch (e) {
-                  console.error('JSON parse error:', e)
-                  sendSSEMessage(encoder, controller, {
-                    type: 'error',
-                    message: 'Failed to parse transcription result'
-                  })
-                }
-                return
-              }
+            const transcriptionResult = await handleTranscriptionProcess(
+              transcriptionProcess, 
+              encoder, 
+              controller
+            );
 
-              if (isCollectingJson && output.startsWith('CHUNK:')) {
-                accumulatedJson += output.slice(6)
-                return
-              }
+            logger.debug('Transcription completed:', { 
+              result: transcriptionResult 
+            });
 
-              // Send regular output as log message
+            // Log final directory contents
+            await logDirectoryContents(transcriptionResult, logger);
+
+            // Read the transcription text
+            try {
+              const transcriptionText = await readTranscriptionFile(transcriptionResult);
+              logger.debug('Read transcription text:', { 
+                length: transcriptionText.length 
+              });
+
               sendSSEMessage(encoder, controller, {
-                type: 'log',
-                message: output.trim()
-              })
-            })
-
-            transcriptionProcess.stderr.on('data', (data) => {
-              const error = data.toString()
-              console.error('Transcribe stderr:', error)
-              
-              // Handle progress updates
-              const progress = parseProgress(error)
-              if (progress !== null) {
-                sendSSEMessage(encoder, controller, {
-                  type: 'progress',
-                  progress,
-                  message: error.trim()
-                })
-                return
-              }
-              
-              // Handle other messages
-              if (!error.includes('%|')) {
-                sendSSEMessage(encoder, controller, {
-                  type: 'log',
-                  message: error.trim()
-                })
-              }
-            })
-
-            // Wait for transcription to complete
-            await new Promise((resolve, reject) => {
-              transcriptionProcess.on('close', (code) => {
-                if (code === 0) {
-                  resolve(null)
-                } else {
-                  reject(new Error(`Transcription process exited with code ${code}`))
-                }
-              })
-
-              transcriptionProcess.on('error', (err) => {
-                reject(new Error(`Failed to start transcription process: ${err.message}`))
-              })
-            })
+                type: 'complete',
+                message: 'Transcription completed successfully',
+                transcription: transcriptionText
+              });
+            } catch (error) {
+              logger.error('Failed to read transcription file:', { error });
+              throw error;
+            }
 
             // Clean up temp files
-            await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}');"`)
-
-            controller.close()
-            return
+            await cleanupDirectory(tmpDir);
+            controller.close();
+            return;
 
           } else if (youtubeLink) {
+            logger.info('Starting YouTube video download:', { youtubeLink });
+            
             sendSSEMessage(encoder, controller, {
               type: 'status',
               message: 'Downloading YouTube video...'
@@ -274,14 +615,16 @@ export async function POST(request: NextRequest) {
 
             console.log('Downloading YouTube video:', youtubeLink)
             const outputPath = join(tmpDir, 'video.mp4')
-            
+            videoPath = outputPath;
+
             try {
               // Add error handling for Python script execution
               const pythonProcess = spawn('python3', [
                 PYTHON_SCRIPT,
                 'download',
                 outputPath,
-                youtubeLink
+                youtubeLink,
+                `--max-filesize=${MAX_FILE_SIZE}` // Add max filesize parameter
               ], {
                 stdio: ['pipe', 'pipe', 'pipe']
               })
@@ -296,25 +639,31 @@ export async function POST(request: NextRequest) {
                 })
               })
 
-              // Update the stderr handler to log more information for debugging
+              // Update the stderr handler to use the improved progress parsing
               pythonProcess.stderr.on('data', (data) => {
                 const lines = data.toString().split('\n')
                 for (const line of lines) {
-                  if (line.startsWith('PROGRESS:')) {
-                    const progressData = parseYoutubeProgress(line)
-                    if (progressData) {
-                      sendSSEMessage(encoder, controller, {
-                        type: 'progress',
-                        progress: progressData.progress,
-                        speed: progressData.speed,
-                        eta: progressData.eta,
-                        timeElapsed: progressData.timeElapsed,
-                        message: `Downloading: ${progressData.progress.toFixed(1)}%`
-                      })
-                    }
-                  } else if (line.includes('[transcribe]')) {
-                    // Parse transcription progress with visual bar
-                    const match = line.match(/Transcribe.*?(\d+)%\|([▏▎▍▌▋▊▉█ ]+)\|\s*(\d+)\/(\d+)\s+\[(\d+:\d+)<(\d+:\d+),\s+([\d.]+)s\/it\]/)
+                  if (!line.trim()) continue
+
+                  const progressData = parseYoutubeProgress(line)
+                  if (progressData) {
+                    sendSSEMessage(encoder, controller, {
+                      type: 'progress',
+                      ...progressData,
+                      message: `Downloading: ${progressData.progress.toFixed(1)}%${
+                        progressData.speed ? ` at ${progressData.speed}` : ''
+                      }${
+                        progressData.eta ? ` (ETA: ${progressData.eta})` : ''
+                      }`
+                    })
+                    continue
+                  }
+
+                  // Handle transcription progress (existing code)
+                  if (line.includes('[transcribe]')) {
+                    const match = line.match(
+                      /Transcribe.*?(\d+)%\|([▏▎▍▌▋▊▉█ ]+)\|\s*(\d+)\/(\d+)\s+\[(\d+:\d+)<(\d+:\d+),\s+([\d.]+)s\/it\]/
+                    )
                     if (match) {
                       const [_, percent, bar, current, total, elapsed, eta, speed] = match
                       sendSSEMessage(encoder, controller, {
@@ -328,8 +677,12 @@ export async function POST(request: NextRequest) {
                         message: 'Transcribing video...',
                         visualBar: bar.trim()
                       })
+                      continue
                     }
-                  } else if (line.trim()) {
+                  }
+
+                  // Log any other messages
+                  if (line.trim()) {
                     sendSSEMessage(encoder, controller, {
                       type: 'log',
                       message: line.trim()
@@ -355,107 +708,54 @@ export async function POST(request: NextRequest) {
 
               videoPath = downloadResult as string
 
+              // Validate downloaded file size
+              try {
+                await validateFileSize(outputPath)
+              } catch (error) {
+                sendSSEMessage(encoder, controller, {
+                  type: 'error',
+                  code: ERROR_TYPES.PAYLOAD_TOO_LARGE,
+                  message: error instanceof Error ? error.message : 'Downloaded file exceeds size limit'
+                })
+                return
+              }
+
               // Start transcription with language parameter
               sendSSEMessage(encoder, controller, {
                 type: 'status',
                 message: 'Starting transcription...'
               })
 
-              const transcriptionProcess = spawn('python3', [
-                TRANSCRIBE_SCRIPT,
-                tmpDir,
-                language
-              ], {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: {
-                  ...process.env,
-                  PYTHONPATH: process.env.PYTHONPATH || '',
-                  TRANSFORMERS_CACHE: join(process.cwd(), '.cache', 'huggingface'),
-                  NEUSPELL_DATA: join(process.cwd(), '.cache', 'neuspell_data'),
-                  TORCH_HOME: join(process.cwd(), '.cache', 'torch'),
-                }
-              })
+              const transcriptionProcess = spawn(
+                'python3',
+                [TRANSCRIBE_SCRIPT, tmpDir, language],
+                getTranscriptionProcessConfig()
+              )
 
-              let accumulatedJson = ''
-              let isCollectingJson = false
+              // Get transcription result directory
+              const transcriptionResult = await handleTranscriptionProcess(transcriptionProcess, encoder, controller);
 
-              transcriptionProcess.stdout.on('data', (data) => {
-                const output = data.toString()
-                console.log('Transcribe stdout:', output)
-                
-                if (output.includes('JSON_OUTPUT_START')) {
-                  isCollectingJson = true
-                  return
-                }
-                
-                if (output.includes('JSON_OUTPUT_END')) {
-                  isCollectingJson = false
-                  try {
-                    const result = JSON.parse(accumulatedJson)
-                    sendSSEMessage(encoder, controller, {
-                      type: 'complete',
-                      transcription: result
-                    })
-                  } catch (e) {
-                    console.error('JSON parse error:', e)
-                    sendSSEMessage(encoder, controller, {
-                      type: 'error',
-                      message: 'Failed to parse transcription result'
-                    })
-                  }
-                  return
-                }
+              // Read the transcription text
+              try {
+                const transcriptionText = await readTranscriptionFile(transcriptionResult);
+                logger.debug('Read transcription text:', { 
+                  length: transcriptionText.length 
+                });
 
-                if (isCollectingJson && output.startsWith('CHUNK:')) {
-                  accumulatedJson += output.slice(6)
-                  return
-                }
-
-                // Send regular output as log message
                 sendSSEMessage(encoder, controller, {
-                  type: 'log',
-                  message: output.trim()
-                })
-              })
+                  type: 'complete',
+                  message: 'Transcription completed successfully',
+                  transcription: transcriptionText
+                });
 
-              transcriptionProcess.stderr.on('data', (data) => {
-                const error = data.toString()
-                console.error('Transcribe stderr:', error)
-                
-                // Handle progress updates
-                const progress = parseProgress(error)
-                if (progress !== null) {
-                  sendSSEMessage(encoder, controller, {
-                    type: 'progress',
-                    progress,
-                    message: error.trim()
-                  })
-                  return
-                }
-                
-                // Handle other messages
-                if (!error.includes('%|')) {
-                  sendSSEMessage(encoder, controller, {
-                    type: 'log',
-                    message: error.trim()
-                  })
-                }
-              })
-
-              // Wait for transcription to complete
-              await new Promise((resolve, reject) => {
-                transcriptionProcess.on('close', (code) => {
-                  if (code === 0) {
-                    resolve(null)
-                  } else {
-                    reject(new Error(`Transcription process exited with code ${code}`))
-                  }
-                })
-
-                transcriptionProcess.on('error', (err) => {
-                  reject(new Error(`Failed to start transcription process: ${err.message}`))
-                })
-              })
+                // Clean up temp files
+                await cleanupDirectory(tmpDir);
+                controller.close();
+                return;
+              } catch (error) {
+                logger.error('Failed to read transcription file:', { error });
+                throw error;
+              }
 
             } catch (error) {
               console.error('Process error:', error)
@@ -480,31 +780,52 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          console.log('Checking if video file exists at:', videoPath!)
+          logger.debug('Checking video file:', { path: videoPath });
           try {
             await readFile(videoPath!)
-            console.log('Video file exists and is readable')
+            logger.info('Video file validated successfully');
           } catch (error) {
-            console.error('Video file check error:', error)
-            throw new Error('Video file not found or not accessible')
+            logger.error('Video file validation failed:', { error });
+            throw new Error('Video file not found or not accessible');
           }
 
-          // Clean up temp files
-          await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}'); shutil.rmtree('${tmpDir}')"`)
+          // Clean up temp files (remove duplicate rmtree call)
+          await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
           
           sendSSEMessage(encoder, controller, {
             type: 'complete',
-            transcription: result.text || result[0]?.text
+            transcription: transcriptionResult.text || transcriptionResult[0]?.text
           })
 
           controller.close()
         } catch (error) {
-          console.error('Error during transcription:', error)
+          logger.error('Transcription process failed:', { error });
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+          
           sendSSEMessage(encoder, controller, {
             type: 'error',
-            message: error instanceof Error ? error.message : 'Unknown error occurred'
-          })
-          controller.close()
+            code: errorMessage.includes('size') ? 
+              ERROR_TYPES.PAYLOAD_TOO_LARGE : 
+              ERROR_TYPES.TRANSCRIPTION_ERROR,
+            message: errorMessage
+          });
+        } finally {
+          if (tmpDir) {
+            try {
+              // Check if directory exists before attempting to remove it
+              const exists = await fs.promises.access(tmpDir)
+                .then(() => true)
+                .catch(() => false);
+              
+              if (exists) {
+                await fs.promises.rm(tmpDir, { recursive: true, force: true });
+                logger.debug('Cleaned up temporary directory:', { tmpDir });
+              }
+            } catch (error) {
+              logger.warn('Failed to clean up temporary directory:', { tmpDir, error });
+            }
+          }
+          controller.close();
         }
       }
     }),
@@ -515,5 +836,5 @@ export async function POST(request: NextRequest) {
         'Connection': 'keep-alive',
       },
     }
-  )
+  );
 }
