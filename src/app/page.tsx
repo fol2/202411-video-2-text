@@ -1,31 +1,31 @@
 'use client'
 
-import VideoTranscription from '@/components/template/video-transcription'
-import TranscriptionHistory from '@/components/TranscriptionHistory'
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TranscriptionResult } from '@/types/transcription'
-import HistoryManager from '@/lib/historyManager'
-import { useToast } from "@/components/ui/use-toast"
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTheme } from "next-themes"
-import { Moon, Sun } from "lucide-react"
-import { Header } from '@/components/Header'
 import { useMediaQuery } from '@/hooks/use-media-query'
-import { Loader2 } from "lucide-react"
-import { cn } from '@/lib/utils'
+import { useToast } from "@/components/ui/use-toast"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Loader2, Moon, Sun, Clock, Upload } from "lucide-react"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip"
-import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 
-export default function Home() {
+import VideoTranscription from '@/components/template/video-transcription'
+import TranscriptionHistory from '@/components/TranscriptionHistory'
+import { TranscriptionResult } from '@/types/transcription'
+import HistoryManager from '@/lib/historyManager'
+import { cn } from '@/lib/utils'
+
+export default function EnhancedTranscriptionPage() {
   const [showDebug, setShowDebug] = useState(false)
   const [activeTab, setActiveTab] = useState('transcribe')
   const { toast } = useToast()
@@ -35,75 +35,150 @@ export default function Home() {
     lastUpdated: new Date().toISOString()
   })
   const [newItemId, setNewItemId] = useState<string | null>(null)
-  const historyTabRef = useRef<HTMLButtonElement>(null);
   const { theme, setTheme } = useTheme()
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [showSuccess, setShowSuccess] = useState(false)
+  const [shortcutsEnabled, setShortcutsEnabled] = useState(true)
+  const [isFirstVisit, setIsFirstVisit] = useState(true)
+  const [mounted, setMounted] = useState(false)
+  const [hasAnimated, setHasAnimated] = useState(false)
+  const [osShortcut, setOsShortcut] = useState('Alt'); // Default to Alt
 
-  // Add responsive state
-  const isDesktop = useMediaQuery("(min-width: 768px)");
+  const isDesktop = useMediaQuery("(min-width: 768px)")
+  const isMac = typeof window !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
-  // Load history on client side only
   useEffect(() => {
+    setMounted(true)
     setHistory(HistoryManager.load())
+    const hasVisited = localStorage.getItem('hasVisited')
+    if (!hasVisited) {
+      localStorage.setItem('hasVisited', 'true')
+    } else {
+      setIsFirstVisit(false)
+    }
   }, [])
 
-  // Refresh history when tab becomes active
   useEffect(() => {
     if (activeTab === 'history') {
       setHistory(HistoryManager.load())
     }
   }, [activeTab])
 
-  // Add effect to handle legacy data migration and cleanup
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // First handle legacy data
       if (HistoryManager.hasLegacyData()) {
-        console.log('Found legacy data, migrating...');
+        console.log('Found legacy data, migrating...')
         if (HistoryManager.forceMigrateLegacy()) {
-          console.log('Migration successful');
-          // After migration, clean up duplicates
+          console.log('Migration successful')
           if (HistoryManager.cleanupDuplicates()) {
-            setHistory(HistoryManager.load());
+            setHistory(HistoryManager.load())
             toast({
               title: "History Cleaned Up",
               description: "Duplicate transcriptions have been removed.",
-            });
+            })
           }
         }
-      } else {
-        // If no legacy data, still clean up any duplicates
-        if (HistoryManager.cleanupDuplicates()) {
-          setHistory(HistoryManager.load());
-        }
+      } else if (HistoryManager.cleanupDuplicates()) {
+        setHistory(HistoryManager.load())
       }
     }
-  }, [toast]);
+  }, [toast])
 
-  // Add state for success animation
-  const [showSuccess, setShowSuccess] = useState(false);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeTab === 'history') {
+        const currentHistory = HistoryManager.load()
+        setHistory(currentHistory)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [activeTab])
 
-  // Single, combined handleTranscriptionComplete function
-  const handleTranscriptionComplete = (result: TranscriptionResult) => {
-    setIsLoading(false);
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      console.log('Key pressed:', {
+        key: e.key,
+        alt: e.altKey,
+        meta: e.metaKey,
+        enabled: shortcutsEnabled,
+        isMac: isMac
+      });
+
+      if (!shortcutsEnabled || 
+          e.target instanceof HTMLInputElement || 
+          e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.altKey) {
+        e.preventDefault();
+        
+        switch (e.key.toLowerCase()) {
+          case '1':
+            setActiveTab('transcribe');
+            showShortcutFeedback('Switched to Transcribe tab');
+            break;
+          case '2':
+            setActiveTab('history');
+            showShortcutFeedback('Switched to History tab');
+            break;
+          case 'd':
+            setShowDebug(prev => !prev);
+            showShortcutFeedback(`Debug mode ${showDebug ? 'disabled' : 'enabled'}`);
+            break;
+          case 'w':
+            setIsFirstVisit(prev => !prev);
+            showShortcutFeedback(`Welcome guide ${isFirstVisit ? 'hidden' : 'shown'}`);
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
     
-    // Show success animation
-    setShowSuccess(true);
-    setTimeout(() => setShowSuccess(false), 1500);
+    return () => {
+      window.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [shortcutsEnabled, isMac, setActiveTab, setShowDebug, showDebug, isFirstVisit, toast]);
+
+  useEffect(() => {
+    console.log('Shortcuts enabled:', shortcutsEnabled);
+    console.log('Active tab:', activeTab);
+    console.log('Debug mode:', showDebug);
+    console.log('First visit:', isFirstVisit);
+  }, [shortcutsEnabled, activeTab, showDebug, isFirstVisit]);
+
+  useEffect(() => {
+    if (!hasAnimated) {
+      setHasAnimated(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    const isMacOS = typeof window !== 'undefined' && 
+      navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    setOsShortcut(isMacOS ? '⌥' : 'Alt');
+  }, []);
+
+  const handleTranscriptionComplete = (result: TranscriptionResult) => {
+    setIsLoading(false)
+    setShowSuccess(true)
+    setTimeout(() => setShowSuccess(false), 1500)
     
     try {
-      setHistory(HistoryManager.load());
-      setActiveTab('history');
-      setNewItemId(result.id);
+      setHistory(HistoryManager.load())
+      setActiveTab('history')
+      setNewItemId(result.id)
       
       toast({
         title: "Transcription Complete",
         description: "Your transcription has been saved to history.",
-      });
+      })
     } finally {
-      setTimeout(() => setNewItemId(null), 3000);
+      setTimeout(() => setNewItemId(null), 3000)
     }
-  };
+  }
 
   const handleRestore = (item: TranscriptionResult) => {
     const history = HistoryManager.load()
@@ -125,7 +200,7 @@ export default function Home() {
   }
 
   const handleDelete = (ids: string[]) => {
-    const currentHistory = HistoryManager.load(); // Get fresh history
+    const currentHistory = HistoryManager.load()
     const updatedHistory = {
       ...currentHistory,
       items: currentHistory.items.map(item => 
@@ -133,34 +208,22 @@ export default function Home() {
           ? { ...item, isDeleted: true, deletedAt: new Date().toISOString() }
           : item
       )
-    };
+    }
     
     if (HistoryManager.save(updatedHistory)) {
-      setHistory(updatedHistory);
+      setHistory(updatedHistory)
       toast({
         title: "Transcription Moved to Trash",
         description: `${ids.length} transcription(s) moved to trash.`,
-      });
+      })
     } else {
       toast({
         title: "Error",
         description: "Failed to delete transcription(s). Please try again.",
         variant: "destructive",
-      });
+      })
     }
-  };
-
-  // Add effect to periodically refresh history
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (activeTab === 'history') {
-        const currentHistory = HistoryManager.load();
-        setHistory(currentHistory);
-      }
-    }, 1000); // Check every second
-
-    return () => clearInterval(interval);
-  }, [activeTab]);
+  }
 
   const handleClearAll = () => {
     if (window.confirm('Are you sure you want to permanently delete all transcriptions? This cannot be undone.')) {
@@ -178,32 +241,25 @@ export default function Home() {
 
   const handleResetStorage = useCallback(() => {
     try {
-      // Clear all localStorage keys
-      localStorage.clear();
-      
-      // Reset history state
-      const emptyHistory = HistoryManager.createEmpty();
-      setHistory(emptyHistory);
-      
+      localStorage.clear()
+      const emptyHistory = HistoryManager.createEmpty()
+      setHistory(emptyHistory)
       toast({
         title: "Storage Reset",
         description: "All storage has been cleared successfully.",
         variant: "default",
-      });
-      
-      // Optionally reload the page to ensure clean state
-      window.location.reload();
+      })
+      window.location.reload()
     } catch (error) {
-      console.error('Failed to reset storage:', error);
+      console.error('Failed to reset storage:', error)
       toast({
         title: "Reset Failed",
         description: "Failed to reset storage. Please try again.",
         variant: "destructive",
-      });
+      })
     }
-  }, [toast]);
+  }, [toast])
 
-  // Add smooth transitions
   const pageTransitions = {
     initial: { opacity: 0, y: 20 },
     animate: { opacity: 1, y: 0 },
@@ -212,9 +268,8 @@ export default function Home() {
       duration: 0.3,
       ease: 'easeInOut'
     }
-  };
+  }
 
-  // Update the tabContentTransitions
   const tabContentTransitions = {
     initial: { 
       opacity: 0, 
@@ -242,62 +297,95 @@ export default function Home() {
         ease: [0.4, 0, 0.2, 1]
       }
     }
-  };
+  }
 
-  // Update the keyboard shortcuts implementation
-  const [shortcutsEnabled, setShortcutsEnabled] = useState(true);
+  const keyboardShortcuts = [
+    { key: `${osShortcut} + 1`, action: 'Switch to Transcribe tab' },
+    { key: `${osShortcut} + 2`, action: 'Switch to History tab' },
+    { key: `${osShortcut} + D`, action: 'Toggle Debug mode' },
+    { key: `${osShortcut} + W`, action: 'Toggle Welcome Guide' }
+  ]
 
-  // Update keyboard shortcuts handler
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Only handle shortcuts if enabled and not in an input/textarea
-      if (!shortcutsEnabled || 
-          e.target instanceof HTMLInputElement || 
-          e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
+  const WelcomeGuide = () => {
+    const steps = [
+      { icon: "📁", text: "Upload a video file" },
+      { icon: "🔗", text: "Or paste a YouTube link" },
+      { icon: "✨", text: "Get clean, formatted text" }
+    ];
 
-      // Use Alt/Option key combinations instead
-      if (e.altKey) {
-        switch (e.key) {
-          case '1':
-            e.preventDefault();
-            setActiveTab('transcribe');
-            break;
-          case '2':
-            e.preventDefault();
-            setActiveTab('history');
-            break;
-          case 'd':
-            e.preventDefault();
-            setShowDebug(prev => !prev);
-            break;
-        }
-      }
+    const shortcuts = [
+      { icon: "⌨️", text: `Press ${osShortcut} + 1/2 to switch tabs` },
+      { icon: "🎯", text: `Press ${osShortcut} + D for debug mode` },
+      { icon: "💡", text: `Press ${osShortcut} + W for this guide` }
+    ];
+
+    const features = [
+      { icon: "🎥", text: "Supports MP4, WebM, OGG videos" },
+      { icon: "🌐", text: "Multiple language support" },
+      { icon: "📝", text: "Edit and format transcriptions" }
+    ];
+
+    const handleDismiss = () => {
+      setIsFirstVisit(false);
+      toast({
+        title: "Welcome Guide Dismissed",
+        description: "You can always bring it back with Alt + W",
+        duration: 3000,
+      });
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [shortcutsEnabled]);
+    const GridSection = ({ title, items, startDelay = 0 }: { 
+      title: string, 
+      items: { icon: string, text: string }[], 
+      startDelay?: number 
+    }) => (
+      <div className="space-y-6">
+        <h3 className="text-lg font-medium text-foreground/80">{title}</h3>
+        <div className="grid grid-cols-3 gap-8 max-w-2xl mx-auto">
+          {items.map((item, i) => (
+            <div
+              key={i}
+              className="flex flex-col items-center gap-2 text-center"
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.5, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{
+                  duration: 0.3,
+                  delay: startDelay + (i * 0.1),
+                  ease: [0.4, 0, 0.2, 1]
+                }}
+              >
+                <span className="text-3xl">{item.icon}</span>
+                <span className="text-sm text-muted-foreground block mt-2">{item.text}</span>
+              </motion.div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
 
-  // Move OS detection to the top, before any usage
-  const isMac = typeof window !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    return (
+      <div className="space-y-8 text-center mb-8">
+        <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">
+          Turn Videos into Text
+        </h2>
 
-  // Then update keyboard shortcuts info
-  const keyboardShortcuts = [
-    { 
-      key: isMac ? '⌥ 1' : 'Alt + 1', 
-      action: 'Switch to Transcribe tab' 
-    },
-    { 
-      key: isMac ? '⌥ 2' : 'Alt + 2', 
-      action: 'Switch to History tab' 
-    },
-    { 
-      key: isMac ? '⌥ D' : 'Alt + D', 
-      action: 'Toggle Debug mode' 
-    }
-  ];
+        <GridSection title="Getting Started" items={steps} startDelay={0.2} />
+        <GridSection title="Keyboard Shortcuts" items={shortcuts} startDelay={0.5} />
+        <GridSection title="Features" items={features} startDelay={0.8} />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDismiss}
+          className="mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Click here to dismiss
+        </Button>
+      </div>
+    );
+  };
 
   const LoadingSkeleton = () => (
     <div className="space-y-4 w-full">
@@ -308,81 +396,8 @@ export default function Home() {
         <Skeleton className="h-4 w-1/2" />
       </div>
     </div>
-  );
+  )
 
-  const [isFirstVisit, setIsFirstVisit] = useState(true);
-
-  useEffect(() => {
-    const hasVisited = localStorage.getItem('hasVisited');
-    if (!hasVisited) {
-      localStorage.setItem('hasVisited', 'true');
-    } else {
-      setIsFirstVisit(false);
-    }
-  }, []);
-
-  // Add new welcome animation component
-  const WelcomeGuide = () => {
-    const steps = [
-      { icon: "📁", text: "Upload a video file" },
-      { icon: "🔗", text: "Or paste a YouTube link" },
-      { icon: "✨", text: "Get clean, formatted text" }
-    ];
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-6 text-center mb-8"
-      >
-        <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">
-          Turn Videos into Text
-        </h2>
-        <div className="flex justify-center gap-8">
-          {steps.map((step, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ 
-                opacity: 1, 
-                y: 0,
-                transition: { delay: i * 0.2 }
-              }}
-              className="flex flex-col items-center gap-2"
-            >
-              <span className="text-3xl">{step.icon}</span>
-              <span className="text-sm text-muted-foreground">{step.text}</span>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
-    );
-  };
-
-  // Add progress state
-  const [progress, setProgress] = useState(0);
-
-  // Update loading state to show progress
-  {isLoading && (
-    <div className="space-y-4">
-      <LoadingSkeleton />
-      <div className="relative h-2 bg-muted rounded-full overflow-hidden">
-        <motion.div
-          className="absolute inset-y-0 left-0 bg-primary"
-          initial={{ width: "0%" }}
-          animate={{ 
-            width: `${progress}%`,
-            transition: { duration: 0.5 }
-          }}
-        />
-      </div>
-      <p className="text-sm text-center text-muted-foreground">
-        Processing... {progress}%
-      </p>
-    </div>
-  )}
-
-  // Add success animation component
   const SuccessAnimation = () => (
     <motion.div
       initial={{ scale: 0 }}
@@ -394,36 +409,25 @@ export default function Home() {
     >
       <div className="text-6xl">🎉</div>
     </motion.div>
-  );
+  )
 
-  // Add background gradient component
   const BackgroundGradient = () => (
     <div className="fixed inset-0 -z-10">
-      <motion.div
+      <div
         className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-background"
-        animate={{
-          opacity: [0.5, 0.8, 0.5],
-          scale: [1, 1.1, 1],
-        }}
-        transition={{
-          duration: 10,
-          repeat: Infinity,
-          repeatType: "reverse"
-        }}
       />
     </div>
-  );
+  )
 
-  // Add new component for progress tracking
   const TranscriptionProgress = ({ progress }: { progress: number }) => {
     const steps = [
       { label: "Uploading", target: 25 },
       { label: "Processing", target: 50 },
       { label: "Transcribing", target: 75 },
       { label: "Finalizing", target: 100 }
-    ];
+    ]
 
-    const currentStep = steps.findIndex(step => progress <= step.target);
+    const currentStep = steps.findIndex(step => progress <= step.target)
 
     return (
       <div className="w-full max-w-md mx-auto">
@@ -462,164 +466,202 @@ export default function Home() {
           </div>
         </div>
       </div>
-    );
-  };
+    )
+  }
 
-  return (
-    <div className={cn(
-      "min-h-screen relative",
-      "grid grid-rows-[auto_1fr_auto]",
-      "transition-all duration-200",
-      isDesktop ? "px-6" : "px-2"
-    )}>
-      <BackgroundGradient />
-      <Header 
-        theme={theme}
-        setTheme={setTheme}
-        showDebug={showDebug}
-        setShowDebug={setShowDebug}
-        className="sticky top-0 bg-background/95 backdrop-blur-md z-50"
-      />
-      
-      <motion.main 
-        className={cn(
-          "h-full overflow-hidden",
-          isDesktop ? "py-6" : "py-3"
-        )}
-        {...pageTransitions}
-      >
-        <div className="h-full max-w-4xl mx-auto px-4">
-          <Tabs 
-            value={activeTab} 
-            onValueChange={setActiveTab}
-            className="h-full flex flex-col"
-          >
-            <TabsList className="grid w-full grid-cols-2 mt-5">
-              <TabsTrigger 
-                value="transcribe"
+  const Header = () => {
+    const titleWords = "Video to Text Transcription".split(" ")
+    
+    return (
+      <header className="sticky top-0 backdrop-blur-md z-50 bg-background/95 py-4 px-6 mb-6 shadow-sm">
+        <div className="container mx-auto">
+          <div className="flex justify-between items-center">
+            <div className="relative">
+              <motion.h1 className="text-2xl md:text-3xl font-bold tracking-tight">
+                {titleWords.map((word, i) => (
+                  <motion.span
+                    key={i}
+                    className={cn(
+                      "inline-block mr-2",
+                      "bg-clip-text text-transparent bg-gradient-to-r",
+                      i === 0 ? "from-primary via-primary to-primary/80" : 
+                      i === 1 ? "from-primary/90 via-primary/80 to-primary/70" :
+                      "from-primary/80 via-primary/70 to-primary/60"
+                    )}
+                  >
+                    {word}
+                  </motion.span>
+                ))}
+              </motion.h1>
+            </div>
+            
+            <div className="flex items-center gap-4">
+              {/* Mode Switch */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveTab(activeTab === 'transcribe' ? 'history' : 'transcribe')}
                 className={cn(
-                  "focus-visible:ring-2 focus-visible:ring-primary",
-                  "transition-all duration-200",
-                  "hover:scale-105 active:scale-95"
+                  "relative px-4 py-2 transition-all duration-200",
+                  "hover:bg-accent/50"
                 )}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setActiveTab('transcribe');
-                  }
-                }}
               >
-                {isLoading ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Processing...
-                  </span>
-                ) : (
-                  "Transcribe"
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="history" className="relative">
-                History
-                <AnimatePresence>
-                  {history.items.length > 0 && (
-                    <motion.span
-                      initial={{ scale: 1 }}
-                      animate={{ 
-                        scale: [1, 1.2, 1],
-                        transition: { duration: 0.3, repeat: 2 }
-                      }}
-                      className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                <AnimatePresence mode="wait" initial={false}>
+                  {activeTab === 'transcribe' ? (
+                    <motion.div 
+                      key="history-button"
+                      className="flex items-center gap-2"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      transition={{ duration: 0.2 }}
                     >
-                      {history.items.length}
-                    </motion.span>
+                      <Clock className="h-4 w-4" />
+                      <span>View History</span>
+                      {history.items.length > 0 && (
+                        <Badge variant="secondary" className="ml-1">
+                          {history.items.length}
+                        </Badge>
+                      )}
+                    </motion.div>
+                  ) : (
+                    <motion.div 
+                      key="transcribe-button"
+                      className="flex items-center gap-2"
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 10 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <Upload className="h-4 w-4" />
+                      <span>New Transcription</span>
+                    </motion.div>
                   )}
                 </AnimatePresence>
-              </TabsTrigger>
-            </TabsList>
+              </Button>
 
-            <div className="flex-1 relative mt-4">
-              <AnimatePresence mode="wait" initial={false}>
-                <motion.div
-                  key={activeTab}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  variants={tabContentTransitions}
-                  className="absolute inset-0"
-                >
-                  {activeTab === 'transcribe' && (
-                    <TabsContent 
-                      value="transcribe" 
-                      className="h-full flex flex-col"
-                      forceMount
+              {/* Theme Toggle */}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                      className="rounded-full w-8 h-8"
                     >
-                      {isLoading ? (
-                        <LoadingSkeleton />
-                      ) : (
-                        <>
-                          {history.items.length === 0 && <WelcomeGuide />}
-                          <div className="flex-1 flex flex-col">
-                            <VideoTranscription 
-                              showDebug={showDebug} 
-                              onTranscriptionComplete={handleTranscriptionComplete}
-                            />
-                          </div>
-                        </>
-                      )}
-                    </TabsContent>
-                  )}
-
-                  {activeTab === 'history' && (
-                    <TabsContent 
-                      value="history" 
-                      className="h-full"
-                      forceMount
-                    >
-                      <TranscriptionHistory
-                        items={history.items}
-                        onRestore={handleRestore}
-                        onDelete={handleDelete}
-                        onClearAll={handleClearAll}
-                        onResetStorage={handleResetStorage}
-                        newItemId={newItemId}
-                      />
-                    </TabsContent>
-                  )}
-                </motion.div>
-              </AnimatePresence>
+                      <motion.div
+                        initial={false}
+                        animate={{ rotate: theme === 'dark' ? 180 : 0 }}
+                      >
+                        {mounted && (theme === 'dark' ? (
+                          <Moon className="h-4 w-4" />
+                        ) : (
+                          <Sun className="h-4 w-4" />
+                        ))}
+                      </motion.div>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
-          </Tabs>
+          </div>
         </div>
-      </motion.main>
+      </header>
+    )
+  }
 
-      <motion.footer 
-        className="py-2 text-center text-sm text-muted-foreground"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.5 }}
+  const showShortcutFeedback = (action: string) => {
+    // Clear any existing feedback timeout
+    if (feedbackTimeout.current) {
+      clearTimeout(feedbackTimeout.current);
+    }
+
+    toast({
+      title: "Keyboard Shortcut Used",
+      description: action,
+      duration: 1500, // Auto-hide after 1.5 seconds
+    });
+  };
+
+  // Add ref for feedback timeout
+  const feedbackTimeout = useRef<NodeJS.Timeout>();
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (feedbackTimeout.current) {
+        clearTimeout(feedbackTimeout.current);
+      }
+    };
+  }, []);
+
+  const handleEmptyTrash = () => {
+    const history = HistoryManager.load()
+    const updatedHistory = {
+      ...history,
+      items: history.items.filter(item => !item.isDeleted)
+    }
+    if (HistoryManager.save(updatedHistory)) {
+      toast({
+        title: "Trash emptied",
+        description: "All deleted transcriptions have been permanently removed.",
+      })
+    }
+  }
+
+  return (
+    <div className="min-h-screen grid grid-rows-[auto_1fr_auto] transition-all duration-200">
+      <BackgroundGradient />
+      <Header />
+      
+      <main className="container mx-auto px-4 pb-12">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            className="relative"
+          >
+            {activeTab === 'transcribe' ? (
+              <>
+                {isFirstVisit && <WelcomeGuide />}
+                {isLoading ? (
+                  <LoadingSkeleton />
+                ) : (
+                  <VideoTranscription 
+                    showDebug={showDebug} 
+                    onTranscriptionComplete={handleTranscriptionComplete}
+                  />
+                )}
+              </>
+            ) : (
+              <div className="relative">
+                <TranscriptionHistory
+                  items={history.items}
+                  onRestore={handleRestore}
+                  onDelete={handleDelete}
+                  onClearAll={handleClearAll}
+                  onResetStorage={handleResetStorage}
+                  onEmptyTrash={handleEmptyTrash}
+                  newItemId={newItemId}
+                />
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      <footer 
+        className="py-4 text-center text-sm text-muted-foreground"
       >
         Built with Next.js and vid2cleantxt
-      </motion.footer>
-
-      {isFirstVisit && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          className={cn(
-            "absolute top-4 left-1/2 -translate-x-1/2",
-            "bg-primary text-primary-foreground px-4 py-2 rounded-lg shadow-lg",
-            "text-sm text-center max-w-md mx-auto z-50"
-          )}
-        >
-          Welcome! Get started by uploading a video or pasting a YouTube link.
-          <button
-            onClick={() => setIsFirstVisit(false)}
-            className="ml-2 opacity-70 hover:opacity-100"
-          >
-            ×
-          </button>
-        </motion.div>
-      )}
+      </footer>
 
       <TooltipProvider>
         <Tooltip>
@@ -641,7 +683,23 @@ export default function Home() {
                 Keyboard Shortcuts {shortcutsEnabled ? '(Enabled)' : '(Disabled)'}
               </div>
               {keyboardShortcuts.map(({ key, action }) => (
-                <div key={key} className="flex justify-between gap-4 items-center">
+                <button
+                  key={key}
+                  onClick={() => {
+                    // Simulate the keyboard shortcut when clicked
+                    const keyEvent = new KeyboardEvent('keydown', {
+                      key: key.slice(-1).toLowerCase(), // Get the last character (1, 2, D, or W)
+                      altKey: true,
+                      bubbles: true
+                    });
+                    window.dispatchEvent(keyEvent);
+                  }}
+                  className={cn(
+                    "w-full flex justify-between gap-4 items-center px-2 py-1 rounded-md",
+                    "hover:bg-accent/50 transition-colors duration-200",
+                    "cursor-pointer"
+                  )}
+                >
                   <kbd className={cn(
                     "px-2 py-1 bg-muted rounded text-xs font-mono",
                     isMac ? "font-medium" : "font-normal"
@@ -649,7 +707,7 @@ export default function Home() {
                     {key}
                   </kbd>
                   <span className="text-xs text-muted-foreground">{action}</span>
-                </div>
+                </button>
               ))}
               <div className="text-xs text-muted-foreground mt-2 pt-2 border-t">
                 Click to {shortcutsEnabled ? 'disable' : 'enable'} shortcuts
@@ -659,9 +717,7 @@ export default function Home() {
         </Tooltip>
       </TooltipProvider>
 
-      {showSuccess && (
-        <SuccessAnimation />
-      )}
+      {showSuccess && <SuccessAnimation />}
 
       {isLoading && (
         <motion.div
@@ -682,4 +738,4 @@ export default function Home() {
       )}
     </div>
   )
-} 
+}

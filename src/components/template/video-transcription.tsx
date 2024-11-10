@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Link, Play, AlertCircle, X, CheckCircle, Loader, ClipboardPaste } from 'lucide-react'
+import { Upload, Link, Play, AlertCircle, X, CheckCircle, Loader, ClipboardPaste, Youtube } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import TranscriptionResults from '@/components/TranscriptionResults'
@@ -68,19 +68,15 @@ interface DetailedProgress {
 
 // Add TranscriptionResult interface
 export interface TranscriptionResult {
-  text: string
-  keywords?: string[]
+  id: string;
+  createdAt: string;
+  text: string;
   metadata?: {
-    duration?: number
-    language?: string
-    confidence?: number
-    model?: string
-    processingTime?: number
-    wordCount?: number
-    title?: string
-    youtubeUrl?: string
-    [key: string]: any
-  }
+    title?: string;
+    duration?: number;
+    language?: string;
+    youtubeUrl?: string;
+  };
 }
 
 // Add a custom hook to handle progress updates
@@ -252,32 +248,35 @@ interface SSEMessage {
   metadata?: Record<string, any>;
 }
 
-// Update the LanguageSelect component to be more compact
-const LanguageSelect = ({ id, value, onChange }: { 
+// Update the LanguageSelect component to accept disabled prop
+const LanguageSelect = ({ id, value, onChange, disabled }: { 
   id: string;
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) => {
   return (
-    <div className="flex items-center gap-2 flex-1">
-      <Globe className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-full border-none bg-transparent shadow-none h-7 px-1.5 text-sm min-w-[130px]">
-          <SelectValue placeholder="Select language" />
-        </SelectTrigger>
-        <SelectContent className="max-h-[300px] min-w-[160px]">
-          {LANGUAGE_OPTIONS.map(({ value, label }) => (
-            <SelectItem 
-              key={value} 
-              value={value}
-              className="text-sm py-1"
-            >
-              {label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger 
+        className={cn(
+          "w-full border-none bg-transparent shadow-none h-7 px-1.5 text-sm min-w-[130px]",
+          disabled && "opacity-50 cursor-not-allowed"
+        )}
+      >
+        <SelectValue placeholder="Select language" />
+      </SelectTrigger>
+      <SelectContent className="max-h-[300px] min-w-[160px]">
+        {LANGUAGE_OPTIONS.map(({ value, label }) => (
+          <SelectItem 
+            key={value} 
+            value={value}
+            className="text-sm py-1"
+          >
+            {label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -439,7 +438,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     return `${mbps.toFixed(2)} MB/s`
   }
 
-  // Update handleYoutubeLinkChange to fetch title
+  // Update handleYoutubeLinkChange to switch tabs when valid URL is pasted
   const handleYoutubeLinkChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value
     setYoutubeLink(value)
@@ -451,6 +450,8 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     if (value && !isValidYoutubeUrl(value)) {
       setError('Please enter a valid YouTube URL')
     } else if (value) {
+      // Switch to YouTube tab if URL is valid
+      setActiveTab('youtube')
       const videoId = getYoutubeVideoId(value)
       if (videoId) {
         const title = await fetchYouTubeTitle(videoId)
@@ -676,16 +677,24 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
       localStorage.setItem('recentYoutubeLinks', JSON.stringify(updated));
     };
 
+    // Update handlePaste to also switch tabs
     const handlePaste = async () => {
       try {
-        const text = await navigator.clipboard.readText();
+        const text = await navigator.clipboard.readText()
         if (isValidYoutubeUrl(text)) {
-          setYoutubeLink(text);
+          setYoutubeLink(text)
+          // Switch to YouTube tab when valid URL is pasted
+          setActiveTab('youtube')
+          const videoId = getYoutubeVideoId(text)
+          if (videoId) {
+            const title = await fetchYouTubeTitle(videoId)
+            setVideoTitle(title)
+          }
         }
       } catch (err) {
-        console.error('Failed to read clipboard');
+        console.error('Failed to read clipboard')
       }
-    };
+    }
 
     return (
       <div className="space-y-4">
@@ -963,239 +972,217 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
   }, [isTranscribing, progress]);
 
   return (
-    <Card className="w-full max-w-3xl mx-auto bg-card border-border">
+    <Card className={cn(
+      "w-full max-w-3xl mx-auto",
+      "bg-card border-border",
+      "dark:bg-background/50 dark:border-border/50"
+    )}>
       <CardContent className="pt-6">
-        <div className="space-y-4">
-          <Tabs 
-            value={activeTab} 
-            onValueChange={setActiveTab} 
-            className="w-full"
-          >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="upload" className="cursor-pointer">
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Video
-              </TabsTrigger>
-              <TabsTrigger value="youtube" className="cursor-pointer">
-                <Link className="w-4 h-4 mr-2" />
-                YouTube Link
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value="upload" className="pt-4 space-y-4">
-              <FileUpload />
-              
-              {/* Progress Display */}
-              {isTranscribing && (
-                <div className="w-full space-y-4 bg-background/50 p-4 rounded-lg border border-border">
-                  <ProgressDisplay 
-                    value={progress} 
-                    status={status} 
-                    details={details}
-                  />
-                  <p className="text-sm text-muted-foreground text-center">
-                    This may take a few minutes depending on the video length
-                  </p>
+        <div className="space-y-6">
+          {/* Unified Input Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* File Upload Card */}
+            <Card 
+              className={cn(
+                "relative overflow-hidden group cursor-pointer",
+                "transition-all duration-200",
+                "hover:shadow-md hover:border-primary/50",
+                "dark:bg-muted/20 dark:hover:bg-muted/30",
+                activeTab === 'upload' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background"
+              )}
+              onClick={() => setActiveTab('upload')}
+            >
+              <input
+                type="file"
+                className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                onChange={handleFileChange}
+                accept="video/mp4,video/webm,video/ogg,video/quicktime"
+              />
+              <CardContent className="p-4 flex flex-col items-center justify-center min-h-[160px]">
+                <div className={cn(
+                  "rounded-full p-3 mb-3",
+                  "bg-primary/10 group-hover:bg-primary/20",
+                  "transition-colors duration-200"
+                )}>
+                  <Upload className="w-5 h-5 text-primary" />
                 </div>
-              )}
+                <h3 className="font-medium mb-1">Upload Video</h3>
+                <p className="text-xs text-muted-foreground text-center">
+                  Drop your video here or click to browse
+                </p>
+                {file && (
+                  <div className="mt-2 text-xs text-primary font-medium">
+                    {file.name}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-              {error && (
-                <Alert variant="destructive" className="w-full border-destructive/50">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleRetry}
-                    className="mt-2"
-                  >
-                    Retry Transcription
-                  </Button>
-                </Alert>
+            {/* YouTube Link Card */}
+            <Card 
+              className={cn(
+                "relative group cursor-pointer",
+                "transition-all duration-200",
+                "hover:shadow-md hover:border-primary/50",
+                "dark:bg-muted/20 dark:hover:bg-muted/30",
+                activeTab === 'youtube' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background"
               )}
+              onClick={() => setActiveTab('youtube')}
+            >
+              <CardContent className="p-4">
+                <div className="flex flex-col items-center justify-center min-h-[160px]">
+                  <div className={cn(
+                    "rounded-full p-3 mb-3",
+                    "bg-red-500/10 group-hover:bg-red-500/20",
+                    "transition-colors duration-200"
+                  )}>
+                    <Youtube className="w-5 h-5 text-red-500" />
+                  </div>
+                  <h3 className="font-medium mb-1">YouTube Link</h3>
+                  <div className="w-full mt-2">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="url"
+                        placeholder="Paste YouTube URL"
+                        value={youtubeLink}
+                        onChange={handleYoutubeLinkChange}
+                        className={cn(
+                          "text-sm",
+                          "bg-transparent",
+                          "border-muted",
+                          "focus:ring-offset-0",
+                          error && "border-red-500 focus-visible:ring-red-500"
+                        )}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePaste();
+                        }}
+                      >
+                        <ClipboardPaste className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
-              {/* Start Transcription Button */}
-              <div className="space-y-1.5">
+          {/* Transcription Controls - Only show when file or YouTube link is ready */}
+          <AnimatePresence mode="wait">
+            {(file || (youtubeLink && !error)) && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                {/* Start Button */}
                 <Button 
-                  onClick={startTranscription} 
-                  disabled={isTranscribing || uploadState.status !== 'complete'}
-                  className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
+                  onClick={startTranscription}
+                  disabled={isTranscribing || (activeTab === 'upload' ? !file : !youtubeLink || !!error)}
+                  className="w-full relative"
                 >
                   {isTranscribing ? (
-                    <>
-                      <Loader className="w-4 h-4 mr-2 animate-spin" />
-                      Transcribing...
-                    </>
+                    <div className="flex items-center gap-2">
+                      <Loader className="w-4 h-4 animate-spin" />
+                      <span>Transcribing...</span>
+                    </div>
                   ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Start Transcription
-                    </>
+                    <div className="flex items-center gap-2">
+                      <Play className="w-4 h-4" />
+                      <span>Start Transcription</span>
+                    </div>
                   )}
                 </Button>
 
-                {/* Language Selection - Even More Compact UI */}
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-muted/40 text-sm">
-                  <span className="text-muted-foreground whitespace-nowrap text-xs">
-                    Language:
-                  </span>
-                  <LanguageSelect
-                    id={`language-${activeTab}`}
-                    value={selectedLanguage}
-                    onChange={setSelectedLanguage}
-                  />
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="youtube" className="pt-4 space-y-4">
-              <YouTubeInput />
-              
-              {/* Progress Display */}
-              {isTranscribing && (
-                <div className="w-full space-y-4 bg-background/50 p-4 rounded-lg border border-border">
-                  <ProgressDisplay 
-                    value={progress} 
-                    status={status} 
-                    details={details}
-                  />
-                  <p className="text-sm text-muted-foreground text-center">
-                    This may take a few minutes depending on the video length
-                  </p>
-                </div>
-              )}
-
-              {error && (
-                <Alert variant="destructive" className="w-full border-destructive/50">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleRetry}
-                    className="mt-2"
-                  >
-                    Retry Transcription
-                  </Button>
-                </Alert>
-              )}
-
-              {/* Start Transcription Button */}
-              <div className="space-y-1.5">
-                <Button 
-                  onClick={startTranscription} 
-                  disabled={isTranscribing || (!youtubeLink || !!error)}
-                  className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
-                >
-                  {isTranscribing ? (
-                    <>
-                      <Loader className="w-4 h-4 mr-2 animate-spin" />
-                      Transcribing...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 mr-2" />
-                      Start Transcription
-                    </>
-                  )}
-                </Button>
-
-                {/* Language Selection - Even More Compact UI */}
-                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-muted/40 text-sm">
-                  <span className="text-muted-foreground whitespace-nowrap text-xs">
-                    Language:
-                  </span>
-                  <LanguageSelect
-                    id={`language-yt`}
-                    value={selectedLanguage}
-                    onChange={setSelectedLanguage}
-                  />
-                </div>
-              </div>
-
-              {/* YouTube embed */}
-              {youtubeLink && !error && (
-                <div className="w-full space-y-2 bg-background/50 p-4 rounded-lg border border-border">
-                  {videoTitle && (
-                    <h3 className="text-lg font-medium text-foreground">
-                      {videoTitle}
-                    </h3>
-                  )}
-                  <div className="aspect-video w-full">
-                    <iframe
-                      src={`https://www.youtube.com/embed/${getYoutubeVideoId(youtubeLink)}`}
-                      className="w-full h-full rounded-lg border border-border"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
+                {/* Language Selection */}
+                <div className={cn(
+                  "flex items-center gap-2 p-2 bg-muted/40 rounded-lg",
+                  isTranscribing && "opacity-75"
+                )}>
+                  <Globe className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Language:</span>
+                  <div className="flex-1">
+                    <LanguageSelect
+                      id="language-select"
+                      value={selectedLanguage}
+                      onChange={setSelectedLanguage}
+                      disabled={isTranscribing}
                     />
                   </div>
                 </div>
-              )}
-            </TabsContent>
-          </Tabs>
+
+                {/* Progress Display */}
+                {isTranscribing && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="w-full"
+                  >
+                    <ProgressDisplay 
+                      value={progress} 
+                      status={status} 
+                      details={details}
+                    />
+                  </motion.div>
+                )}
+
+                {/* Error Display */}
+                {error && (
+                  <Alert variant="destructive" className="animate-in slide-in-from-top">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* YouTube Preview */}
+          <AnimatePresence mode="wait">
+            {youtubeLink && !error && videoTitle && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="rounded-lg overflow-hidden border bg-background/50"
+              >
+                <div className="p-3 border-b bg-muted/30">
+                  <h3 className="font-medium truncate">{videoTitle}</h3>
+                </div>
+                <div className="aspect-video">
+                  <iframe
+                    src={`https://www.youtube.com/embed/${getYoutubeVideoId(youtubeLink)}`}
+                    className="w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Results Section */}
+          {transcriptionResult && isBoxVisible && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full"
+            >
+              <TranscriptionResults 
+                result={transcriptionResult}
+                onRemove={handleRemoveBox}
+              />
+            </motion.div>
+          )}
         </div>
       </CardContent>
-
-      <CardFooter className="flex flex-col items-center space-y-4">
-        {transcriptionResult && isBoxVisible && (
-          <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
-            <TranscriptionResults 
-              result={transcriptionResult} 
-              isVisible={isTranscriptionVisible}
-              onVisibilityChange={setIsTranscriptionVisible}
-              onRemove={handleRemoveBox}
-            />
-            
-            {/* Flying animation element */}
-            <AnimatePresence>
-              {isAnimatingToHistory && (
-                <motion.div
-                  initial={{ 
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    scale: 1,
-                    opacity: 0.8,
-                    zIndex: 50,
-                    pointerEvents: 'none'
-                  }}
-                  animate={{
-                    top: historyTabRef.current?.getBoundingClientRect().top ?? 0,
-                    left: historyTabRef.current?.getBoundingClientRect().left ?? 0,
-                    scale: 0.1,
-                    opacity: 0
-                  }}
-                  exit={{ opacity: 0 }}
-                  transition={{
-                    duration: 0.8,
-                    ease: 'easeInOut'
-                  }}
-                  className="pointer-events-none"
-                >
-                  <div className="bg-white rounded-lg border p-4 shadow-lg">
-                    <div className="h-20 w-full bg-gray-50 animate-pulse" />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
-
-        {/* Debug console */}
-        {showDebug && (
-          <div className="mt-4 border rounded-lg p-4 bg-black text-white w-full">
-            <div className="font-mono text-sm h-64 overflow-auto">
-              {logs.map((log, i) => (
-                <div key={i} className="whitespace-pre-wrap text-green-400">
-                  {`[${new Date().toLocaleTimeString()}] ${log}`}
-                </div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          </div>
-        )}
-      </CardFooter>
     </Card>
   )
 }

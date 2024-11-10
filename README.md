@@ -1,4 +1,7 @@
-# vid2cleantxt-Web
+# Video to Text Transcription Web App
+## Build with Next.js and vid2cleanTxt
+
+![vid2cleantxt-Web](public/wj-v2t-screenshot.png)
 
 **vid2cleantxt-Web** is a sophisticated web-based platform designed to convert speech from video files into clean, readable text. Leveraging the power of [Hugging Face Transformers](https://huggingface.co/facebook/wav2vec2-large-960h-lv60-self) and [OpenAI's Whisper](https://openai.com/blog/whisper/) model, it provides an intuitive interface for seamless transcription.
 
