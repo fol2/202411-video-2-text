@@ -387,6 +387,32 @@ async function logDirectoryContents(dir: string, logger: any) {
   }
 }
 
+// Add this function to parse transcription progress
+function parseTranscriptionProgress(line: string): {
+  progress: number;
+  currentStep?: number;
+  totalSteps?: number;
+  timeElapsed?: string;
+  eta?: string;
+  speed?: string;
+} | null {
+  const match = line.match(
+    /Transcribing video:\s+(\d+)%\|[^\|]+\|\s+(\d+)\/(\d+)\s+\[(\d+:\d+)<(\d+:\d+),\s+([\d\.]+)s\/it\]/
+  );
+  if (match) {
+    const [_, percent, current, total, elapsed, eta, speed] = match;
+    return {
+      progress: parseFloat(percent),
+      currentStep: parseInt(current),
+      totalSteps: parseInt(total),
+      timeElapsed: elapsed,
+      eta: eta,
+      speed: `${parseFloat(speed).toFixed(2)}s/it`
+    };
+  }
+  return null;
+}
+
 // Update handleTranscriptionProcess function
 async function handleTranscriptionProcess(
   process: ReturnType<typeof spawn>,
@@ -402,67 +428,90 @@ async function handleTranscriptionProcess(
       const output = data.toString();
       logger.debug('Transcribe stdout:', { output });
 
-      // Split output into lines to handle multiple lines in a single 'data' event
       const lines = output.split('\n');
       for (const line of lines) {
+        if (!line.trim()) continue;
+
         if (line.includes('JSON_OUTPUT_START')) {
           isCollectingJson = true;
-          accumulatedJson = ''; // Reset accumulated JSON
+          accumulatedJson = '';
           continue;
         }
 
         if (line.includes('JSON_OUTPUT_END')) {
           isCollectingJson = false;
-
-          // Strip 'CHUNK:' prefix if present
-          const jsonString = accumulatedJson.startsWith('CHUNK:')
-            ? accumulatedJson.slice('CHUNK:'.length)
-            : accumulatedJson;
-
           try {
-            const result = JSON.parse(jsonString);
-            logger.debug('Parsed JSON result:', { result });
-            transcriptionResult = result.text_output_dir;
-            logger.debug('Set transcription result:', { transcriptionResult });
-          } catch (e) {
-            logger.error('JSON parse error:', { error: e, accumulatedJson });
-            throw new Error('Failed to parse transcription result');
+            // Parse the JSON output to get the transcription directory
+            const jsonData = JSON.parse(accumulatedJson.replace('CHUNK:', ''));
+            transcriptionResult = jsonData.text_output_dir;
+            logger.debug('Parsed transcription result directory:', { transcriptionResult });
+          } catch (error) {
+            logger.error('Failed to parse JSON output:', { error, accumulatedJson });
           }
           continue;
         }
 
         if (isCollectingJson) {
-          // Accumulate JSON content line by line
           accumulatedJson += line.trim();
           continue;
         }
 
-        // Handle regular log messages
-        if (line.trim()) {
+        // Parse transcription progress
+        const progressData = parseTranscriptionProgress(line);
+        if (progressData) {
           sendSSEMessage(encoder, controller, {
-            type: 'log',
-            message: line.trim(),
+            type: 'progress',
+            progress: progressData.progress,
+            speed: progressData.speed,
+            eta: progressData.eta,
+            currentStep: progressData.currentStep?.toString(),
+            totalSteps: progressData.totalSteps?.toString(),
+            message: `Transcribing: ${progressData.progress.toFixed(1)}%${
+              progressData.speed ? ` at ${progressData.speed}` : ''
+            }${progressData.eta ? ` (ETA: ${progressData.eta})` : ''}`
           });
+          continue;
         }
+
+        // Handle regular log messages
+        sendSSEMessage(encoder, controller, {
+          type: 'log',
+          message: line.trim()
+        });
       }
     },
     onError: (data: Buffer) => {
       const error = data.toString();
       logger.debug('Transcribe stderr:', { error });
-      
-      const progress = parseProgress(error);
-      
-      if (progress !== null) {
-        sendSSEMessage(encoder, controller, {
-          type: 'progress',
-          progress,
-          message: error.trim()
-        });
-      } else if (!error.includes('%|')) {
-        sendSSEMessage(encoder, controller, {
-          type: 'log',
-          message: error.trim()
-        });
+
+      const lines = error.split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        // Parse transcription progress
+        const progressData = parseTranscriptionProgress(line);
+        if (progressData) {
+          sendSSEMessage(encoder, controller, {
+            type: 'progress',
+            progress: progressData.progress,
+            speed: progressData.speed,
+            eta: progressData.eta,
+            currentStep: progressData.currentStep?.toString(),
+            totalSteps: progressData.totalSteps?.toString(),
+            message: `Transcribing: ${progressData.progress.toFixed(1)}%${
+              progressData.speed ? ` at ${progressData.speed}` : ''
+            }${progressData.eta ? ` (ETA: ${progressData.eta})` : ''}`
+          });
+          continue;
+        }
+
+        // Handle other messages
+        if (!line.includes('%|')) {
+          sendSSEMessage(encoder, controller, {
+            type: 'log',
+            message: line.trim()
+          });
+        }
       }
     }
   });

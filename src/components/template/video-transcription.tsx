@@ -12,6 +12,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import TranscriptionResults from '@/components/TranscriptionResults'
 import HistoryManager from '@/lib/historyManager'
 import { motion, AnimatePresence } from 'framer-motion'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Globe } from 'lucide-react'
 
 // Language options based on Whisper's supported languages
 const LANGUAGE_OPTIONS = [
@@ -242,6 +250,35 @@ interface SSEMessage {
   progress?: number;
   detectedLanguage?: string;
   metadata?: Record<string, any>;
+}
+
+// Update the LanguageSelect component to be more compact
+const LanguageSelect = ({ id, value, onChange }: { 
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+}) => {
+  return (
+    <div className="flex items-center gap-2 flex-1">
+      <Globe className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="w-full border-none bg-transparent shadow-none h-7 px-1.5 text-sm min-w-[130px]">
+          <SelectValue placeholder="Select language" />
+        </SelectTrigger>
+        <SelectContent className="max-h-[300px] min-w-[160px]">
+          {LANGUAGE_OPTIONS.map(({ value, label }) => (
+            <SelectItem 
+              key={value} 
+              value={value}
+              className="text-sm py-1"
+            >
+              {label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
 }
 
 export default function Component({ showDebug = false, onTranscriptionComplete }: Props) {
@@ -929,25 +966,6 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     <Card className="w-full max-w-3xl mx-auto bg-card border-border">
       <CardContent className="pt-6">
         <div className="space-y-4">
-          {/* Language Selection */}
-          <div className="space-y-2">
-            <label htmlFor="language" className="text-sm font-medium">
-              Source Language
-            </label>
-            <select
-              id="language"
-              value={selectedLanguage}
-              onChange={(e) => setSelectedLanguage(e.target.value)}
-              className="w-full p-2 border rounded-md bg-background border-input"
-            >
-              {LANGUAGE_OPTIONS.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <Tabs 
             value={activeTab} 
             onValueChange={setActiveTab} 
@@ -996,23 +1014,37 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
               )}
 
               {/* Start Transcription Button */}
-              <Button 
-                onClick={startTranscription} 
-                disabled={isTranscribing || uploadState.status !== 'complete'}
-                className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {isTranscribing ? (
-                  <>
-                    <Loader className="w-4 h-4 mr-2 animate-spin" />
-                    Transcribing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Transcription
-                  </>
-                )}
-              </Button>
+              <div className="space-y-1.5">
+                <Button 
+                  onClick={startTranscription} 
+                  disabled={isTranscribing || uploadState.status !== 'complete'}
+                  className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {isTranscribing ? (
+                    <>
+                      <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      Transcribing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Start Transcription
+                    </>
+                  )}
+                </Button>
+
+                {/* Language Selection - Even More Compact UI */}
+                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-muted/40 text-sm">
+                  <span className="text-muted-foreground whitespace-nowrap text-xs">
+                    Language:
+                  </span>
+                  <LanguageSelect
+                    id={`language-${activeTab}`}
+                    value={selectedLanguage}
+                    onChange={setSelectedLanguage}
+                  />
+                </div>
+              </div>
             </TabsContent>
 
             <TabsContent value="youtube" className="pt-4 space-y-4">
@@ -1048,23 +1080,37 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
               )}
 
               {/* Start Transcription Button */}
-              <Button 
-                onClick={startTranscription} 
-                disabled={isTranscribing || (!youtubeLink || !!error)}
-                className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                {isTranscribing ? (
-                  <>
-                    <Loader className="w-4 h-4 mr-2 animate-spin" />
-                    Transcribing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Transcription
-                  </>
-                )}
-              </Button>
+              <div className="space-y-1.5">
+                <Button 
+                  onClick={startTranscription} 
+                  disabled={isTranscribing || (!youtubeLink || !!error)}
+                  className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {isTranscribing ? (
+                    <>
+                      <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      Transcribing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Start Transcription
+                    </>
+                  )}
+                </Button>
+
+                {/* Language Selection - Even More Compact UI */}
+                <div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded-md bg-muted/40 text-sm">
+                  <span className="text-muted-foreground whitespace-nowrap text-xs">
+                    Language:
+                  </span>
+                  <LanguageSelect
+                    id={`language-yt`}
+                    value={selectedLanguage}
+                    onChange={setSelectedLanguage}
+                  />
+                </div>
+              </div>
 
               {/* YouTube embed */}
               {youtubeLink && !error && (
