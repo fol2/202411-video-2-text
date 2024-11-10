@@ -410,9 +410,9 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
   }, []) // Run once on mount
 
   return (
-    <div className="space-y-4 overflow-clip">
-      {/* Search and Actions Row */}
-      <div className="flex items-center gap-4 pr-[6px]">
+    <div className="space-y-4">
+      {/* Search and Actions Row - Fix position */}
+      <div className="flex items-center gap-4 sticky top-0 bg-background/80 backdrop-blur-sm z-10 pb-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
           <Input
@@ -436,10 +436,9 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
         />
       </div>
 
-      {/* Transcription List - Add width-lock class during animation */}
+      {/* Transcription List - Single scrollable container */}
       <div className={cn(
-        "space-y-4 overflow-y-auto custom-scrollbar relative",
-        isAnimating && "fixed-width"
+        "space-y-4 custom-scrollbar",
       )}>
         <div className="pr-[6px]">
           {filteredItems.map((item, index) => (
