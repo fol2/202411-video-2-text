@@ -29,6 +29,7 @@
     --chart-3: 197 37% 24%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
+    --scrollbar-width: 6px;
   }
 
   .dark {
@@ -102,8 +103,10 @@
 
   /* Custom scrollbar styles */
   .custom-scrollbar {
-    scrollbar-width: thin; /* Firefox */
-    scrollbar-color: transparent transparent; /* Firefox */
+    padding-right: var(--scrollbar-width);
+    overflow-y: auto;
+    scrollbar-width: var(--scrollbar-width);
+    scrollbar-color: transparent transparent;
     -ms-overflow-style: none; /* IE and Edge */
     margin-right: calc(-1 * var(--scrollbar-width, 6px));
     position: relative;
@@ -112,7 +115,7 @@
   }
 
   .custom-scrollbar::-webkit-scrollbar {
-    width: var(--scrollbar-width, 6px); /* Chrome, Safari, Opera */
+    width: var(--scrollbar-width); /* Chrome, Safari, Opera */
     position: absolute;
     right: 0;
   }
@@ -148,4 +151,32 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: theme('colors.yellow.100');
+  }
+  50% {
+    background-color: theme('colors.yellow.200');
+  }
+  100% {
+    background-color: theme('colors.yellow.100');
+  }
+}
+
+.dark @keyframes highlight-pulse {
+  0% {
+    background-color: theme('colors.yellow.900 / 0.3');
+  }
+  50% {
+    background-color: theme('colors.yellow.800 / 0.4');
+  }
+  100% {
+    background-color: theme('colors.yellow.900 / 0.3');
+  }
+}
+
+.animate-highlight-pulse {
+  animation: highlight-pulse 2s ease-in-out infinite;
 }

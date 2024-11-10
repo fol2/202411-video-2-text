@@ -64,11 +64,9 @@ const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ range, onFormat }) =>
 }
 
 interface TranscriptionResultsProps {
-  result: TranscriptionResult
-  defaultExpanded?: boolean
-  onRemove?: () => void
-  className?: string
-  disableAnimations?: boolean
+  result: TranscriptionResult;
+  onRemove?: () => void;
+  className?: string;
 }
 
 // Add new interfaces for section management
@@ -175,9 +173,106 @@ const CollapsibleSection = memo(({
   )
 })
 
+// Add this type definition near the top of the file
+type DownloadFormat = 'html' | 'markdown' | 'txt';
+
+// Add this interface for the download menu
+interface DownloadMenuProps {
+  onDownload: (format: DownloadFormat) => void;
+  isOpen: boolean;
+  setIsOpen: (open: boolean) => void;
+}
+
+// Add these helper functions before the TranscriptionResults component
+const generateMarkdown = (sections: TranscriptionSection[], editedSections: Record<string, string>, result: TranscriptionResult): string => {
+  const title = result.metadata?.title || 'Transcription';
+  const metadata = [
+    `# ${title}\n`,
+    `- Date: ${new Date().toLocaleString()}`,
+    result.metadata?.language ? `- Language: ${result.metadata.language}` : '',
+    result.metadata?.duration ? `- Duration: ${formatDuration(result.metadata.duration)}` : '',
+    result.metadata?.confidence ? `- Confidence: ${(result.metadata.confidence * 100).toFixed(1)}%` : '',
+    '\n## Content\n'
+  ].filter(Boolean).join('\n');
+
+  const content = sections
+    .map(section => editedSections[section.id] || section.text)
+    .join('\n\n');
+
+  return `${metadata}\n${content}`;
+};
+
+const generatePlainText = (sections: TranscriptionSection[], editedSections: Record<string, string>, result: TranscriptionResult): string => {
+  const title = result.metadata?.title || 'Transcription';
+  const metadata = [
+    title,
+    '=' .repeat(title.length), // Add underline for the title
+    '',
+    `Date: ${new Date().toLocaleString()}`,
+    result.metadata?.language ? `Language: ${result.metadata.language}` : '',
+    result.metadata?.duration ? `Duration: ${formatDuration(result.metadata.duration)}` : '',
+    result.metadata?.confidence ? `Confidence: ${(result.metadata.confidence * 100).toFixed(1)}%` : '',
+    '\nContent:\n'
+  ].filter(Boolean).join('\n');
+
+  const content = sections
+    .map(section => editedSections[section.id] || section.text)
+    .join('\n\n');
+
+  return `${metadata}\n${content}`;
+};
+
+// Add this new component for the download menu
+const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen }) => {
+  return (
+    <div className="relative">
+      <Button 
+        variant="outline" 
+        size="sm" 
+        onClick={() => setIsOpen(!isOpen)}
+        className="gap-2"
+      >
+        <Download className="w-4 h-4" />
+        Download
+        <ChevronDown className={cn("w-4 h-4 transition-transform", isOpen ? "rotate-180" : "")} />
+      </Button>
+      
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-popover border border-border z-50"
+          >
+            <div className="py-1">
+              {[
+                { format: 'html' as const, label: 'HTML Document' },
+                { format: 'markdown' as const, label: 'Markdown' },
+                { format: 'txt' as const, label: 'Plain Text' }
+              ].map(({ format, label }) => (
+                <button
+                  key={format}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2"
+                  onClick={() => {
+                    onDownload(format);
+                    setIsOpen(false);
+                  }}
+                >
+                  <Download className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({ 
   result, 
-  defaultExpanded = false,
   onRemove,
   className
 }) => {
@@ -191,11 +286,12 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   const [showPreview, setShowPreview] = useState(true)
   const [editedSections, setEditedSections] = useState<Record<string, string>>({})
   const [selectedRange, setSelectedRange] = useState<Range | null>(null)
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
 
   // Update visibility when prop changes
   useEffect(() => {
     setIsContentVisible(true)
-  }, [defaultExpanded])
+  }, [result.id])
 
   // Toggle visibility with animation
   const toggleVisibility = () => {
@@ -327,52 +423,70 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   }
 
   // Enhanced download function
-  const handleDownload = () => {
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const filename = `transcription-${timestamp}.html`
-    
-    const content = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Transcription</title>
-          <style>
-            body { font-family: system-ui; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
-            .metadata { color: #666; margin-bottom: 2rem; }
-            .transcription { line-height: 1.6; }
-            .section { margin-bottom: 1.5em; }
-          </style>
-        </head>
-        <body>
-          <div class="metadata">
-            <h1>Transcription</h1>
-            <p>Date: ${new Date().toLocaleString()}</p>
-            ${result.metadata?.language ? `<p>Language: ${result.metadata.language}</p>` : ''}
-            ${result.metadata?.duration ? `<p>Duration: ${formatDuration(result.metadata.duration)}</p>` : ''}
-            ${result.metadata?.confidence ? `<p>Confidence: ${(result.metadata.confidence * 100).toFixed(1)}%</p>` : ''}
-          </div>
-          <div class="transcription">
-            ${sections.map(section => `
-              <div class="section">
-                ${editedSections[section.id] || section.text}
-              </div>
-            `).join('')}
-          </div>
-        </body>
-      </html>
-    `
+  const handleDownload = (format: DownloadFormat) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'transcription';
+    let content: string;
+    let filename: string;
+    let mimeType: string;
 
-    const blob = new Blob([content], { type: 'text/html;charset=utf-8' })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-  }
+    switch (format) {
+      case 'markdown':
+        content = generateMarkdown(sections, editedSections, result);
+        filename = `${title}-${timestamp}.md`;
+        mimeType = 'text/markdown';
+        break;
+      case 'txt':
+        content = generatePlainText(sections, editedSections, result);
+        filename = `${title}-${timestamp}.txt`;
+        mimeType = 'text/plain';
+        break;
+      case 'html':
+      default:
+        const displayTitle = result.metadata?.title || 'Transcription';
+        content = `<!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <title>${displayTitle}</title>
+              <style>
+                body { font-family: system-ui; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+                .metadata { color: #666; margin-bottom: 2rem; }
+                .transcription { line-height: 1.6; }
+                .section { margin-bottom: 1.5em; }
+              </style>
+            </head>
+            <body>
+              <div class="metadata">
+                <h1>${displayTitle}</h1>
+                <p>Date: ${new Date().toLocaleString()}</p>
+                ${result.metadata?.language ? `<p>Language: ${result.metadata.language}</p>` : ''}
+                ${result.metadata?.duration ? `<p>Duration: ${formatDuration(result.metadata.duration)}</p>` : ''}
+                ${result.metadata?.confidence ? `<p>Confidence: ${(result.metadata.confidence * 100).toFixed(1)}%</p>` : ''}
+              </div>
+              <div class="transcription">
+                ${sections.map(section => `
+                  <div class="section">
+                    ${editedSections[section.id] || section.text}
+                  </div>
+                `).join('')}
+              </div>
+            </body>
+          </html>`;
+        filename = `${title}-${timestamp}.html`;
+        mimeType = 'text/html';
+    }
+
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
 
   // Format duration helper
   const formatDuration = (seconds: number): string => {
@@ -461,14 +575,11 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
                 </span>
               )}
             </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleDownload}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download
-            </Button>
+            <DownloadMenu 
+              onDownload={handleDownload}
+              isOpen={isDownloadMenuOpen}
+              setIsOpen={setIsDownloadMenuOpen}
+            />
             {onRemove && (
               <Button
                 variant="ghost"
