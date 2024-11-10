@@ -108,16 +108,23 @@ interface Props {
   onTranscriptionComplete?: (result: TranscriptionResult) => void
 }
 
-// Add this function near the top with other utility functions
+// Update the getYoutubeVideoId function to handle Shorts URLs
 const getYoutubeVideoId = (url: string): string | null => {
   try {
     const urlObj = new URL(url)
+    
+    // Handle standard YouTube URLs
     if (urlObj.hostname.includes('youtube.com')) {
+      // Handle YouTube Shorts URLs
+      if (urlObj.pathname.includes('/shorts/')) {
+        return urlObj.pathname.split('/shorts/')[1].split('?')[0]
+      }
+      // Handle standard watch URLs
       return urlObj.searchParams.get('v')
-    } else if (urlObj.hostname === 'youtu.be') {
+    } 
+    // Handle youtu.be URLs
+    else if (urlObj.hostname === 'youtu.be') {
       return urlObj.pathname.slice(1)
-    } else if (urlObj.pathname.includes('/shorts/')) {
-      return urlObj.pathname.split('/shorts/')[1]
     }
   } catch (e) {
     return null
@@ -605,14 +612,14 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     )
   })
 
-  // Update the YouTubeInput component
+  // Update the YouTubeInput component to include Shorts example
   const YouTubeInput = () => (
     <div className="space-y-4">
       <div className="flex items-center space-x-2">
         <Link className="w-5 h-5 text-red-500 flex-shrink-0" />
         <Input 
           type="url"
-          placeholder="https://www.youtube.com/watch?v=..." 
+          placeholder="https://www.youtube.com/watch?v=... or youtube.com/shorts/..." 
           value={youtubeLink}
           onChange={handleYoutubeLinkChange}
           className={cn(
@@ -644,13 +651,24 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     <div className="space-y-4">
       {uploadState.status === 'idle' ? (
         <div className="flex items-center justify-center w-full">
-          <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-64 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+          <label 
+            htmlFor="dropzone-file" 
+            className={cn(
+              "flex flex-col items-center justify-center w-full h-64",
+              "border-2 border-dashed rounded-lg cursor-pointer",
+              "border-muted hover:border-muted-foreground",
+              "bg-background hover:bg-accent/50",
+              "transition-colors duration-200"
+            )}
+          >
             <div className="flex flex-col items-center justify-center pt-5 pb-6">
-              <Upload className="w-8 h-8 mb-4 text-gray-500" />
-              <p className="mb-2 text-sm text-gray-500">
+              <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
+              <p className="mb-2 text-sm text-muted-foreground">
                 <span className="font-semibold">Click to upload</span> or drag and drop
               </p>
-              <p className="text-xs text-gray-500">MP4, WebM, OGG, or MOV (MAX. 500MB)</p>
+              <p className="text-xs text-muted-foreground">
+                MP4, WebM, OGG, or MOV (MAX. 500MB)
+              </p>
             </div>
             <Input 
               id="dropzone-file" 
@@ -706,7 +724,9 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
       )}
 
       {file && !uploadState.isUploading && (
-        <p className="mt-2 text-sm text-gray-500">Selected file: {file.name}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Selected file: {file.name}
+        </p>
       )}
     </div>
   )
@@ -940,7 +960,9 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
         {youtubeLink && !error && (
           <div className="w-full space-y-2">
             {videoTitle && (
-              <h3 className="text-lg font-medium text-gray-900">{videoTitle}</h3>
+              <h3 className="text-lg font-medium text-foreground">
+                {videoTitle}
+              </h3>
             )}
             <div className="aspect-video w-full">
               <iframe

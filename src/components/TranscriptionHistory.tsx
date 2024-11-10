@@ -30,6 +30,8 @@ import {
 import { TranscriptionResult } from '@/types/transcription'
 import { HistoryV2 } from '@/lib/historyManager'
 import TranscriptionResults from '@/components/TranscriptionResults'
+import { Card, CardDescription } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 
 interface TranscriptionHistoryProps {
   items: HistoryV2['items']
@@ -257,23 +259,15 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
       {/* Transcription List */}
       <div className="space-y-4">
         {filteredItems.map(item => (
-          <motion.div
-            key={item.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ 
-              opacity: 1, 
-              y: 0,
-              scale: item.id === newItemId ? [1, 1.02, 1] : 1,
-              backgroundColor: item.id === newItemId ? ['#ffffff', '#f3f4f6', '#ffffff'] : '#ffffff'
-            }}
-            transition={{
-              duration: item.id === newItemId ? 2 : 0.2,
-              repeat: item.id === newItemId ? 1 : 0
-            }}
-            exit={{ opacity: 0, y: -20 }}
-            className={`border rounded-lg ${
-              item.isDeleted ? 'bg-gray-50' : 'bg-white'
-            }`}
+          <Card 
+            key={item.id} 
+            className={cn(
+              "mb-4 transition-all duration-300",
+              "hover:shadow-md",
+              "dark:border-muted dark:hover:border-accent",
+              newItemId === item.id && "border-primary dark:border-primary",
+              item.isDeleted && "opacity-60"
+            )}
           >
             {/* Preview Header */}
             <div 
@@ -352,13 +346,13 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
                   animate={{ height: 'auto', opacity: 1 }}
                   exit={{ height: 0, opacity: 0 }}
                   transition={{ duration: 0.2 }}
-                  className="overflow-hidden border-t"
+                  className="overflow-hidden border-t border-border bg-background"
                 >
                   <TranscriptionResults result={item.result} />
                 </motion.div>
               )}
             </AnimatePresence>
-          </motion.div>
+          </Card>
         ))}
 
         {filteredItems.length === 0 && (

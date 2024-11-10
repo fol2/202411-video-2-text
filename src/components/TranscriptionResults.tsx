@@ -6,6 +6,7 @@ import { TranscriptionResult } from '@/components/template/video-transcription'
 import { ErrorBoundary, FallbackProps } from 'react-error-boundary'
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
+import { cn } from '@/lib/utils'
 
 // Add ErrorFallback component
 function ErrorFallback({ error }: FallbackProps) {
@@ -24,17 +25,16 @@ const RichTextEditor = dynamic(() => import('./RichTextEditor'), {
 })
 
 interface FloatingToolbarProps {
-  selection: Selection | null;
+  range: Range;
   onFormat: (format: string) => void;
 }
 
-const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ selection, onFormat }) => {
+const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ range, onFormat }) => {
   const [position, setPosition] = useState({ top: 0, left: 0 })
   const toolbarRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (selection && !selection.isCollapsed && toolbarRef.current) {
-      const range = selection.getRangeAt(0)
+    if (toolbarRef.current) {
       const rect = range.getBoundingClientRect()
       const toolbar = toolbarRef.current.getBoundingClientRect()
 
@@ -43,9 +43,7 @@ const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ selection, onFormat }
         left: rect.left + (rect.width - toolbar.width) / 2
       })
     }
-  }, [selection])
-
-  if (!selection || selection.isCollapsed) return null
+  }, [range])
 
   return (
     <motion.div
@@ -53,7 +51,7 @@ const FloatingToolbar: React.FC<FloatingToolbarProps> = ({ selection, onFormat }
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 10 }}
-      className="fixed z-50 bg-white shadow-lg rounded-lg border p-2 flex gap-2"
+      className="fixed z-50 bg-popover text-popover-foreground shadow-lg rounded-lg border border-border p-2 flex gap-2"
       style={{ top: position.top, left: position.left }}
     >
       <Button size="sm" variant="ghost" onClick={() => onFormat('bold')}>B</Button>
@@ -158,11 +156,13 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
               )}
             </div>
           ) : (
-            <div className="text-sm text-gray-600 truncate">{previewText}</div>
+            <div className="text-sm text-foreground/70 dark:text-foreground/70 truncate">
+              {previewText}
+            </div>
           )}
         </motion.div>
         {section.startTime !== undefined && (
-          <div className="flex-shrink-0 text-xs text-gray-400">
+          <div className="flex-shrink-0 text-xs text-muted-foreground">
             {formatTimestamp(section.startTime)}
           </div>
         )}
@@ -179,7 +179,6 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState(result.text)
-  const [selection, setSelection] = useState<Range | null>(null)
   const [copySuccess, setCopySuccess] = useState('')
   const [isContentVisible, setIsContentVisible] = useState(isVisibleProp)
   const editorRef = useRef<any>(null)
@@ -187,6 +186,7 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   const [isAllExpanded, setIsAllExpanded] = useState(false)
   const [showPreview, setShowPreview] = useState(true)
   const [editedSections, setEditedSections] = useState<Record<string, string>>({})
+  const [selectedRange, setSelectedRange] = useState<Range | null>(null)
 
   // Update visibility when prop changes
   useEffect(() => {
@@ -283,10 +283,10 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   useEffect(() => {
     const handleSelection = () => {
       const selection = window.getSelection()
-      if (selection && !selection.isCollapsed) {
-        setSelection(selection.getRangeAt(0))
+      if (selection && !selection.isCollapsed && selection.rangeCount > 0) {
+        setSelectedRange(selection.getRangeAt(0))
       } else {
-        setSelection(null)
+        setSelectedRange(null)
       }
     }
 
@@ -393,183 +393,164 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     })
   }, [])
 
+  // Add this handleFormat function
+  const handleFormat = useCallback((format: string) => {
+    if (!editorRef.current) return;
+    
+    switch (format) {
+      case 'bold':
+        editorRef.current.chain().focus().toggleBold().run();
+        break;
+      case 'italic':
+        editorRef.current.chain().focus().toggleItalic().run();
+        break;
+      case 'underline':
+        editorRef.current.chain().focus().toggleUnderline().run();
+        break;
+    }
+  }, [editorRef]);
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="space-y-6 bg-white rounded-lg border p-6"
-    >
-      {/* Title and Metadata Row */}
-      <div className="flex flex-col space-y-4">
-        <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold">Transcription Result</h2>
-          <div className="flex items-center gap-2">
-            {isContentVisible && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleEditToggle}
-                >
-                  <Edit2 className="w-4 h-4 mr-2" />
-                  {isEditing ? 'View' : 'Edit'}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={toggleAllSections}
-                  className="text-xs"
-                >
-                  {isAllExpanded ? (
-                    <>
-                      <Minimize2 className="w-4 h-4 mr-1" />
-                      Collapse All
-                    </>
-                  ) : (
-                    <>
-                      <Maximize2 className="w-4 h-4 mr-1" />
-                      Expand All
-                    </>
-                  )}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={() => handleCopy('formatted')}
-                  className="relative"
-                >
-                  <Copy className="w-4 h-4 mr-2" />
-                  Copy
-                  {copySuccess && (
-                    <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs py-1 px-2 rounded">
-                      {copySuccess}
-                    </span>
-                  )}
-                </Button>
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  onClick={handleDownload}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Download
-                </Button>
-              </>
-            )}
-            <div className="flex items-center gap-1">
+    <div className="space-y-4 bg-background text-foreground">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Transcription Result</h2>
+        <div className="flex items-center gap-2">
+          {isContentVisible && (
+            <>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={toggleVisibility}
-                className="ml-2"
+                onClick={handleEditToggle}
               >
-                {isContentVisible ? (
-                  <EyeOff className="w-4 h-4" />
+                <Edit2 className="w-4 h-4 mr-2" />
+                {isEditing ? 'View' : 'Edit'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleAllSections}
+                className="text-xs"
+              >
+                {isAllExpanded ? (
+                  <>
+                    <Minimize2 className="w-4 h-4 mr-1" />
+                    Collapse All
+                  </>
                 ) : (
-                  <Eye className="w-4 h-4" />
+                  <>
+                    <Maximize2 className="w-4 h-4 mr-1" />
+                    Expand All
+                  </>
                 )}
               </Button>
-              {!isContentVisible && onRemove && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onRemove}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => handleCopy('formatted')}
+                className="relative"
+              >
+                <Copy className="w-4 h-4 mr-2" />
+                Copy
+                {copySuccess && (
+                  <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs py-1 px-2 rounded">
+                    {copySuccess}
+                  </span>
+                )}
+              </Button>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleDownload}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download
+              </Button>
+            </>
+          )}
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={toggleVisibility}
+              className="ml-2"
+            >
+              {isContentVisible ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
               )}
-            </div>
+            </Button>
+            {!isContentVisible && onRemove && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRemove}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            )}
           </div>
-        </div>
-
-        {/* Metadata */}
-        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-          {result.metadata?.duration && (
-            <div className="flex items-center gap-1">
-              <Clock className="w-4 h-4" />
-              <span>{formatDuration(result.metadata.duration)}</span>
-            </div>
-          )}
-          {result.metadata?.language && (
-            <div className="flex items-center gap-1">
-              <Globe className="w-4 h-4" />
-              <span>{result.metadata.language.toUpperCase()}</span>
-            </div>
-          )}
-          {result.metadata?.confidence && (
-            <div className="flex items-center gap-1">
-              <CheckCircle2 className="w-4 h-4" />
-              <span>{(result.metadata.confidence * 100).toFixed(1)}% confidence</span>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Floating Toolbar for Text Selection */}
-      <AnimatePresence>
-        {selection && isContentVisible && (
-          <FloatingToolbar
-            selection={selection}
-            onFormat={(format) => {
-              if (editorRef.current) {
-                editorRef.current.chain().focus()[format]().run()
-              }
-            }}
-          />
-        )}
-      </AnimatePresence>
+      {isVisibleProp && (
+        <div className="relative">
+          <div 
+            className={cn(
+              "prose prose-sm max-w-none",
+              "dark:prose-invert",
+              "bg-background",
+              "rounded-md p-4",
+              "border border-border"
+            )}
+          >
+            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+              {result.metadata?.duration && (
+                <div className="flex items-center gap-1">
+                  <Clock className="w-4 h-4" />
+                  <span>{formatDuration(result.metadata.duration)}</span>
+                </div>
+              )}
+              {result.metadata?.language && (
+                <div className="flex items-center gap-1">
+                  <Globe className="w-4 h-4" />
+                  <span>{result.metadata.language.toUpperCase()}</span>
+                </div>
+              )}
+              {result.metadata?.confidence && (
+                <div className="flex items-center gap-1">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{(result.metadata.confidence * 100).toFixed(1)}% confidence</span>
+                </div>
+              )}
+            </div>
 
-      {/* Main Content */}
-      <AnimatePresence>
-        {isContentVisible && (
-          <>
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="border rounded-lg divide-y">
-                {sections.map(section => (
-                  <CollapsibleSection
-                    key={section.id}
-                    section={section}
-                    onToggle={toggleSection}
-                    isPreview={showPreview}
-                    isEditing={isEditing}
-                    onSectionEdit={onSectionEdit}
-                    editorRef={editorRef}
-                  />
-                ))}
-              </div>
-            </motion.div>
+            <div className="border rounded-lg divide-y">
+              {sections.map(section => (
+                <CollapsibleSection
+                  key={section.id}
+                  section={section}
+                  onToggle={toggleSection}
+                  isPreview={showPreview}
+                  isEditing={isEditing}
+                  onSectionEdit={onSectionEdit}
+                  editorRef={editorRef}
+                />
+              ))}
+            </div>
+          </div>
 
-            {/* Keyboard Shortcuts - Only visible when content is visible */}
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="pt-4 border-t mt-4"
-            >
-              <div className="text-xs text-gray-500 flex justify-center space-x-4">
-                <span>Alt + H to toggle visibility</span>
-                <span>•</span>
-                <span>Alt + A to toggle all sections</span>
-                {isEditing && (
-                  <>
-                    <span>•</span>
-                    <span>Esc to exit edit mode</span>
-                  </>
-                )}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
-    </motion.div>
-  )
-}
+          <AnimatePresence>
+            {selectedRange && (
+              <FloatingToolbar range={selectedRange} onFormat={handleFormat} />
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // Helper function to format timestamp
 function formatTimestamp(seconds: number): string {

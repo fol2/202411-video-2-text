@@ -10,6 +10,8 @@ import { TranscriptionResult } from '@/types/transcription'
 import HistoryManager from '@/lib/historyManager'
 import { useToast } from "@/components/ui/use-toast"
 import { motion, AnimatePresence } from 'framer-motion'
+import { useTheme } from "next-themes"
+import { Moon, Sun } from "lucide-react"
 
 export default function Home() {
   const [showDebug, setShowDebug] = useState(false)
@@ -22,6 +24,7 @@ export default function Home() {
   })
   const [newItemId, setNewItemId] = useState<string | null>(null)
   const historyTabRef = useRef<HTMLDivElement>(null);
+  const { theme, setTheme } = useTheme()
 
   // Load history on client side only
   useEffect(() => {
@@ -183,13 +186,32 @@ export default function Home() {
             <h1 className="text-2xl font-bold text-center flex-1">
               Video to Text Transcription
             </h1>
-            <div className="flex items-center gap-2">
-              <Label htmlFor="debug-mode" className="text-sm">Debug Mode</Label>
-              <Switch
-                id="debug-mode"
-                checked={showDebug}
-                onCheckedChange={setShowDebug}
-              />
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="dark-mode" className="text-sm">Dark Mode</Label>
+                <Switch
+                  id="dark-mode"
+                  checked={theme === 'dark'}
+                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
+                  className="data-[state=checked]:bg-primary"
+                >
+                  <div className="flex items-center justify-center w-full h-full">
+                    {theme === 'dark' ? (
+                      <Moon className="h-3 w-3" />
+                    ) : (
+                      <Sun className="h-3 w-3" />
+                    )}
+                  </div>
+                </Switch>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="debug-mode" className="text-sm">Debug Mode</Label>
+                <Switch
+                  id="debug-mode"
+                  checked={showDebug}
+                  onCheckedChange={setShowDebug}
+                />
+              </div>
             </div>
           </div>
         </div>
