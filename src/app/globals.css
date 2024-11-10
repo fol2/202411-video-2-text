@@ -57,13 +57,45 @@
     --chart-4: 280 65% 60%;
     --chart-5: 340 75% 55%;
   }
+
+  * {
+    @apply transition-colors duration-300;
+  }
+
+  body {
+    @apply antialiased;
+  }
+
+  /* Add smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Improve focus styles */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+
+  /* Add new transition utilities */
+  .transition-transform {
+    transition-property: transform;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 300ms;
+  }
+
+  .transition-opacity {
+    transition-property: opacity;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 300ms;
+  }
 }
 
-@layer base {
+/* Add reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
   * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

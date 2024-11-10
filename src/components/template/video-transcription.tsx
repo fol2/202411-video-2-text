@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, Link, Play, AlertCircle, X, CheckCircle, Loader } from 'lucide-react'
+import { Upload, Link, Play, AlertCircle, X, CheckCircle, Loader, ClipboardPaste } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import TranscriptionResults from '@/components/TranscriptionResults'
@@ -597,7 +597,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
 
     return (
       <div className="space-y-2 w-full">
-        <div className="flex justify-between text-sm text-gray-500">
+        <div className="flex justify-between text-sm text-muted-foreground">
           <span className="truncate max-w-[80%] font-medium">{status}</span>
           <span className="font-medium">{value.toFixed(1)}%</span>
         </div>
@@ -605,7 +605,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
           value={value} 
           className="h-2 transition-all duration-200" 
         />
-        <div className="text-xs text-gray-500 font-mono bg-gray-50 p-2 rounded-md">
+        <div className="text-xs text-muted-foreground font-mono bg-muted/30 dark:bg-muted/10 p-2 rounded-md">
           {getDetailedStatus()}
         </div>
       </div>
@@ -613,123 +613,206 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
   })
 
   // Update the YouTubeInput component to include Shorts example
-  const YouTubeInput = () => (
-    <div className="space-y-4">
-      <div className="flex items-center space-x-2">
-        <Link className="w-5 h-5 text-red-500 flex-shrink-0" />
-        <Input 
-          type="url"
-          placeholder="https://www.youtube.com/watch?v=... or youtube.com/shorts/..." 
-          value={youtubeLink}
-          onChange={handleYoutubeLinkChange}
-          className={cn(
-            "flex-1",
-            error && "border-red-500 focus-visible:ring-red-500"
-          )}
-        />
-      </div>
-      {error && (
-        <p className="text-sm text-red-500">{error}</p>
-      )}
+  const YouTubeInput = () => {
+    const [recentLinks, setRecentLinks] = useState<string[]>([]);
 
-      {/* Show instructions only when no valid URL is entered */}
-      {(!youtubeLink || error) && (
-        <div className="text-sm text-muted-foreground">
-          Supported formats:
-          <ul className="list-disc list-inside ml-2 mt-1">
-            <li>youtube.com/watch?v=...</li>
-            <li>youtu.be/...</li>
-            <li>youtube.com/shorts/...</li>
-          </ul>
-        </div>
-      )}
-    </div>
-  )
+    useEffect(() => {
+      const saved = localStorage.getItem('recentYoutubeLinks');
+      if (saved) {
+        setRecentLinks(JSON.parse(saved));
+      }
+    }, []);
 
-  // Update the FileUpload component
-  const FileUpload = () => (
-    <div className="space-y-4">
-      {uploadState.status === 'idle' ? (
-        <div className="flex items-center justify-center w-full">
-          <label 
-            htmlFor="dropzone-file" 
+    const saveLink = (link: string) => {
+      const updated = [link, ...recentLinks.filter(l => l !== link)].slice(0, 5);
+      setRecentLinks(updated);
+      localStorage.setItem('recentYoutubeLinks', JSON.stringify(updated));
+    };
+
+    const handlePaste = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (isValidYoutubeUrl(text)) {
+          setYoutubeLink(text);
+        }
+      } catch (err) {
+        console.error('Failed to read clipboard');
+      }
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center space-x-2">
+          <Link className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <Input 
+            type="url"
+            placeholder="https://www.youtube.com/watch?v=... or youtube.com/shorts/..." 
+            value={youtubeLink}
+            onChange={handleYoutubeLinkChange}
             className={cn(
-              "flex flex-col items-center justify-center w-full h-64",
-              "border-2 border-dashed rounded-lg cursor-pointer",
-              "border-muted hover:border-muted-foreground",
-              "bg-background hover:bg-accent/50",
-              "transition-colors duration-200"
+              "flex-1",
+              error && "border-red-500 focus-visible:ring-red-500"
             )}
+          />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={handlePaste}
+            title="Paste from clipboard"
           >
-            <div className="flex flex-col items-center justify-center pt-5 pb-6">
-              <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
-              <p className="mb-2 text-sm text-muted-foreground">
-                <span className="font-semibold">Click to upload</span> or drag and drop
-              </p>
-              <p className="text-xs text-muted-foreground">
-                MP4, WebM, OGG, or MOV (MAX. 500MB)
-              </p>
-            </div>
-            <Input 
-              id="dropzone-file" 
-              type="file" 
-              className="hidden" 
-              onChange={handleFileChange} 
-              accept="video/mp4,video/webm,video/ogg,video/quicktime" 
-            />
-          </label>
+            <ClipboardPaste className="h-4 w-4" />
+          </Button>
         </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className="text-sm font-medium">
-              {uploadState.status === 'complete' 
-                ? 'Upload Complete' 
-                : uploadState.status === 'uploading'
-                ? 'Uploading video...'
-                : 'Upload Failed'}
-            </span>
-            {uploadState.status === 'uploading' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCancelUpload}
-                className="h-8 px-2"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
+        {error && (
+          <p className="text-sm text-red-500">{error}</p>
+        )}
+
+        {/* Show instructions only when no valid URL is entered */}
+        {(!youtubeLink || error) && (
+          <div className="text-sm text-muted-foreground">
+            Supported formats:
+            <ul className="list-disc list-inside ml-2 mt-1">
+              <li>youtube.com/watch?v=...</li>
+              <li>youtu.be/...</li>
+              <li>youtube.com/shorts/...</li>
+            </ul>
           </div>
-          {uploadState.status === 'uploading' ? (
-            <>
-              <Progress value={uploadState.progress} />
-              <div className="text-sm text-muted-foreground">
-                Upload speed: {uploadState.speed}
-              </div>
-            </>
-          ) : uploadState.status === 'complete' ? (
-            <div className="flex items-center space-x-2 text-green-600">
-              <CheckCircle className="h-5 w-5" />
-              <span>Ready for transcription</span>
+        )}
+
+        {recentLinks.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Recent links:</p>
+            <div className="flex flex-wrap gap-2">
+              {recentLinks.map((link, i) => (
+                <button
+                  key={i}
+                  onClick={() => setYoutubeLink(link)}
+                  className="text-xs bg-muted px-2 py-1 rounded-full hover:bg-muted/80"
+                >
+                  {new URL(link).pathname.slice(0, 20)}...
+                </button>
+              ))}
             </div>
-          ) : null}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
-      {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+  // Add drag and drop visual feedback
+  const FileUpload = () => {
+    const [isDragging, setIsDragging] = useState(false);
 
-      {file && !uploadState.isUploading && (
-        <p className="mt-2 text-sm text-muted-foreground">
-          Selected file: {file.name}
-        </p>
-      )}
-    </div>
-  )
+    const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+    };
+
+    const handleDragLeave = () => {
+      setIsDragging(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const files = e.dataTransfer.files;
+      if (files?.[0]) {
+        handleFileChange({ target: { files } } as any);
+      }
+    };
+
+    return (
+      <div 
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={cn(
+          "space-y-4",
+          isDragging && "opacity-50 scale-105 transition-all duration-200"
+        )}
+      >
+        {uploadState.status === 'idle' ? (
+          <div className="flex items-center justify-center w-full">
+            <label 
+              htmlFor="dropzone-file" 
+              className={cn(
+                "flex flex-col items-center justify-center w-full h-64",
+                "border-2 border-dashed rounded-lg cursor-pointer",
+                "border-muted hover:border-muted-foreground/50",
+                "bg-background/50 hover:bg-accent/10",
+                "transition-colors duration-200"
+              )}
+            >
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
+                <p className="mb-2 text-sm text-muted-foreground">
+                  <span className="font-semibold">Click to upload</span> or drag and drop
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  MP4, WebM, OGG, or MOV (MAX. 500MB)
+                </p>
+              </div>
+              <Input 
+                id="dropzone-file" 
+                type="file" 
+                className="hidden" 
+                onChange={handleFileChange} 
+                accept="video/mp4,video/webm,video/ogg,video/quicktime" 
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="space-y-4 bg-background/50 p-4 rounded-lg border border-border">
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-medium">
+                {uploadState.status === 'complete' 
+                  ? 'Upload Complete' 
+                  : uploadState.status === 'uploading'
+                  ? 'Uploading video...'
+                  : 'Upload Failed'}
+              </span>
+              {uploadState.status === 'uploading' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCancelUpload}
+                  className="h-8 px-2"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            {uploadState.status === 'uploading' ? (
+              <>
+                <Progress value={uploadState.progress} />
+                <div className="text-sm text-muted-foreground">
+                  Upload speed: {uploadState.speed}
+                </div>
+              </>
+            ) : uploadState.status === 'complete' ? (
+              <div className="flex items-center space-x-2 text-green-600">
+                <CheckCircle className="h-5 w-5" />
+                <span>Ready for transcription</span>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {file && !uploadState.isUploading && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Selected file: {file.name}
+          </p>
+        )}
+      </div>
+    );
+  };
 
   useEffect(() => {
     return () => {
@@ -813,12 +896,28 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     }, 1000) // Match this with animation duration
   }, [onTranscriptionComplete])
 
+  // Clear YouTube embed when switching tabs
+  useEffect(() => {
+    if (activeTab === 'upload') {
+      setYoutubeLink('') // Clear YouTube link
+      setVideoTitle(null) // Clear video title
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (isTranscribing) {
+      const originalTitle = document.title;
+      document.title = `(${Math.round(progress)}%) Transcribing - Video to Text`;
+      
+      return () => {
+        document.title = originalTitle;
+      };
+    }
+  }, [isTranscribing, progress]);
+
   return (
-    <Card className="w-full max-w-3xl mx-auto">
-      <CardHeader>
-        <CardTitle className="text-2xl font-bold text-center">Video Transcription</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <Card className="w-full max-w-3xl mx-auto bg-card border-border">
+      <CardContent className="pt-6">
         <div className="space-y-4">
           {/* Language Selection */}
           <div className="space-y-2">
@@ -829,7 +928,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
               id="language"
               value={selectedLanguage}
               onChange={(e) => setSelectedLanguage(e.target.value)}
-              className="w-full p-2 border rounded-md"
+              className="w-full p-2 border rounded-md bg-background border-input"
             >
               {LANGUAGE_OPTIONS.map(({ value, label }) => (
                 <option key={value} value={value}>
@@ -854,62 +953,133 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 YouTube Link
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="upload" className="pt-4">
+            <TabsContent value="upload" className="pt-4 space-y-4">
               <FileUpload />
+              
+              {/* Progress Display */}
+              {isTranscribing && (
+                <div className="w-full space-y-4 bg-background/50 p-4 rounded-lg border border-border">
+                  <ProgressDisplay 
+                    value={progress} 
+                    status={status} 
+                    details={details}
+                  />
+                  <p className="text-sm text-muted-foreground text-center">
+                    This may take a few minutes depending on the video length
+                  </p>
+                </div>
+              )}
+
+              {error && (
+                <Alert variant="destructive" className="w-full border-destructive/50">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleRetry}
+                    className="mt-2"
+                  >
+                    Retry Transcription
+                  </Button>
+                </Alert>
+              )}
+
+              {/* Start Transcription Button */}
+              <Button 
+                onClick={startTranscription} 
+                disabled={isTranscribing || uploadState.status !== 'complete'}
+                className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {isTranscribing ? (
+                  <>
+                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                    Transcribing...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Start Transcription
+                  </>
+                )}
+              </Button>
             </TabsContent>
-            <TabsContent value="youtube" className="pt-4">
+
+            <TabsContent value="youtube" className="pt-4 space-y-4">
               <YouTubeInput />
+              
+              {/* Progress Display */}
+              {isTranscribing && (
+                <div className="w-full space-y-4 bg-background/50 p-4 rounded-lg border border-border">
+                  <ProgressDisplay 
+                    value={progress} 
+                    status={status} 
+                    details={details}
+                  />
+                  <p className="text-sm text-muted-foreground text-center">
+                    This may take a few minutes depending on the video length
+                  </p>
+                </div>
+              )}
+
+              {error && (
+                <Alert variant="destructive" className="w-full border-destructive/50">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handleRetry}
+                    className="mt-2"
+                  >
+                    Retry Transcription
+                  </Button>
+                </Alert>
+              )}
+
+              {/* Start Transcription Button */}
+              <Button 
+                onClick={startTranscription} 
+                disabled={isTranscribing || (!youtubeLink || !!error)}
+                className="w-full relative bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {isTranscribing ? (
+                  <>
+                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                    Transcribing...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Start Transcription
+                  </>
+                )}
+              </Button>
+
+              {/* YouTube embed */}
+              {youtubeLink && !error && (
+                <div className="w-full space-y-2 bg-background/50 p-4 rounded-lg border border-border">
+                  {videoTitle && (
+                    <h3 className="text-lg font-medium text-foreground">
+                      {videoTitle}
+                    </h3>
+                  )}
+                  <div className="aspect-video w-full">
+                    <iframe
+                      src={`https://www.youtube.com/embed/${getYoutubeVideoId(youtubeLink)}`}
+                      className="w-full h-full rounded-lg border border-border"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </div>
       </CardContent>
+
       <CardFooter className="flex flex-col items-center space-y-4">
-        <Button 
-          onClick={startTranscription} 
-          disabled={isTranscribing || (activeTab === 'upload' && uploadState.status !== 'complete') || (activeTab === 'youtube' && (!youtubeLink || !!error))}
-          className="w-full relative"
-        >
-          {isTranscribing ? (
-            <>
-              <Loader className="w-4 h-4 mr-2 animate-spin" />
-              Transcribing...
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4 mr-2" />
-              Start Transcription
-            </>
-          )}
-        </Button>
-
-        {isTranscribing && (
-          <div className="w-full space-y-4">
-            <ProgressDisplay 
-              value={progress} 
-              status={status} 
-              details={details}
-            />
-            <p className="text-sm text-muted-foreground text-center">
-              This may take a few minutes depending on the video length
-            </p>
-          </div>
-        )}
-
-        {error && (
-          <Alert variant="destructive" className="w-full">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={handleRetry}
-              className="mt-2"
-            >
-              Retry Transcription
-            </Button>
-          </Alert>
-        )}
-
         {transcriptionResult && isBoxVisible && (
           <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
             <TranscriptionResults 
@@ -953,25 +1123,6 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
-        )}
-
-        {/* YouTube embed after transcription */}
-        {youtubeLink && !error && (
-          <div className="w-full space-y-2">
-            {videoTitle && (
-              <h3 className="text-lg font-medium text-foreground">
-                {videoTitle}
-              </h3>
-            )}
-            <div className="aspect-video w-full">
-              <iframe
-                src={`https://www.youtube.com/embed/${getYoutubeVideoId(youtubeLink)}`}
-                className="w-full h-full rounded-lg"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            </div>
           </div>
         )}
 

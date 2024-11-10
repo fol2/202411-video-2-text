@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Copy, Download, Clock, Globe, CheckCircle2, Edit2, Eye, EyeOff, ChevronDown, ChevronRight, ChevronUp, Maximize2, Minimize2, X } from 'lucide-react'
@@ -7,6 +7,7 @@ import { ErrorBoundary, FallbackProps } from 'react-error-boundary'
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 
 // Add ErrorFallback component
 function ErrorFallback({ error }: FallbackProps) {
@@ -66,6 +67,7 @@ interface TranscriptionResultsProps {
   isVisible?: boolean
   onVisibilityChange?: (visible: boolean) => void
   onRemove?: () => void
+  className?: string
 }
 
 // Add new interfaces for section management
@@ -85,40 +87,33 @@ interface CollapsibleSectionProps {
   isEditing: boolean
   onSectionEdit: (id: string, content: string) => void
   editorRef: React.RefObject<any>
+  className?: string
 }
 
 const PREVIEW_LENGTH = 150 // Characters to show in preview
 const SECTION_LENGTH = 1000 // Characters per section
 
 // Add CollapsibleSection component
-const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
+const CollapsibleSection = memo(({
   section,
   onToggle,
   isPreview,
   isEditing,
   onSectionEdit,
-  editorRef
-}) => {
+  editorRef,
+  className
+}: CollapsibleSectionProps) => {
   const previewText = section.text.slice(0, PREVIEW_LENGTH) + (section.text.length > PREVIEW_LENGTH ? '...' : '')
   
   return (
-    <motion.div
-      initial={false}
-      animate={{ 
-        height: 'auto',
-        opacity: 1
-      }}
-      exit={{
-        height: 0,
-        opacity: 0
-      }}
-      transition={{
-        duration: 0.2,
-        ease: 'easeInOut'
-      }}
-      className="border-b last:border-b-0 overflow-hidden"
+    <div 
+      className={cn(
+        "border rounded-lg p-2",
+        "hover:bg-muted/50",
+        className
+      )}
     >
-      <div className="flex items-start gap-2 py-2">
+      <div className="flex items-start gap-2">
         {!isEditing && (
           <div 
             className="flex-shrink-0 pt-1 cursor-pointer"
@@ -132,7 +127,10 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           </div>
         )}
         <motion.div 
-          className={`flex-grow ${!isEditing && 'cursor-pointer'}`}
+          className={cn(
+            "flex-grow min-w-0",
+            !isEditing && 'cursor-pointer'
+          )}
           initial={false}
           animate={{ 
             height: section.isExpanded ? 'auto' : '1.5rem',
@@ -142,7 +140,7 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           onClick={() => !isEditing && onToggle(section.id)}
         >
           {section.isExpanded ? (
-            <div className="whitespace-pre-wrap text-sm">
+            <div className="whitespace-pre-wrap text-sm break-words overflow-hidden">
               {isEditing ? (
                 <div onClick={(e) => e.stopPropagation()}>
                   <RichTextEditor
@@ -152,7 +150,10 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
                   />
                 </div>
               ) : (
-                <div dangerouslySetInnerHTML={{ __html: section.text }} />
+                <div 
+                  dangerouslySetInnerHTML={{ __html: section.text }}
+                  className="break-words overflow-wrap-anywhere"
+                />
               )}
             </div>
           ) : (
@@ -162,20 +163,21 @@ const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
           )}
         </motion.div>
         {section.startTime !== undefined && (
-          <div className="flex-shrink-0 text-xs text-muted-foreground">
+          <div className="flex-shrink-0 text-xs text-muted-foreground ml-2">
             {formatTimestamp(section.startTime)}
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   )
-}
+})
 
 const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({ 
   result, 
   isVisible: isVisibleProp = true,
   onVisibilityChange,
-  onRemove
+  onRemove,
+  className
 }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState(result.text)
@@ -411,143 +413,108 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   }, [editorRef]);
 
   return (
-    <div className="space-y-4 bg-background text-foreground">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Transcription Result</h2>
-        <div className="flex items-center gap-2">
-          {isContentVisible && (
-            <>
+    <div className={cn("space-y-4", className)}>
+      <Card className="relative bg-card border-muted">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-lg font-medium">Transcription Result</CardTitle>
+          <div className="flex items-center gap-2">
+            {isContentVisible && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleEditToggle}
+                >
+                  <Edit2 className="w-4 h-4 mr-2" />
+                  {isEditing ? 'View' : 'Edit'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleAllSections}
+                  className="text-xs"
+                >
+                  {isAllExpanded ? (
+                    <>
+                      <Minimize2 className="w-4 h-4 mr-1" />
+                      Collapse All
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-4 h-4 mr-1" />
+                      Expand All
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => handleCopy('formatted')}
+                  className="relative"
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy
+                  {copySuccess && (
+                    <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs py-1 px-2 rounded">
+                      {copySuccess}
+                    </span>
+                  )}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleDownload}
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download
+                </Button>
+              </>
+            )}
+            <div className="flex items-center gap-1">
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleEditToggle}
+                onClick={toggleVisibility}
+                className="ml-2"
               >
-                <Edit2 className="w-4 h-4 mr-2" />
-                {isEditing ? 'View' : 'Edit'}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={toggleAllSections}
-                className="text-xs"
-              >
-                {isAllExpanded ? (
-                  <>
-                    <Minimize2 className="w-4 h-4 mr-1" />
-                    Collapse All
-                  </>
+                {isContentVisible ? (
+                  <EyeOff className="w-4 h-4" />
                 ) : (
-                  <>
-                    <Maximize2 className="w-4 h-4 mr-1" />
-                    Expand All
-                  </>
+                  <Eye className="w-4 h-4" />
                 )}
               </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => handleCopy('formatted')}
-                className="relative"
-              >
-                <Copy className="w-4 h-4 mr-2" />
-                Copy
-                {copySuccess && (
-                  <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs py-1 px-2 rounded">
-                    {copySuccess}
-                  </span>
-                )}
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={handleDownload}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Download
-              </Button>
-            </>
-          )}
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleVisibility}
-              className="ml-2"
-            >
-              {isContentVisible ? (
-                <EyeOff className="w-4 h-4" />
-              ) : (
-                <Eye className="w-4 h-4" />
-              )}
-            </Button>
-            {!isContentVisible && onRemove && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onRemove}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {isVisibleProp && (
-        <div className="relative">
-          <div 
-            className={cn(
-              "prose prose-sm max-w-none",
-              "dark:prose-invert",
-              "bg-background",
-              "rounded-md p-4",
-              "border border-border"
-            )}
-          >
-            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-              {result.metadata?.duration && (
-                <div className="flex items-center gap-1">
-                  <Clock className="w-4 h-4" />
-                  <span>{formatDuration(result.metadata.duration)}</span>
-                </div>
-              )}
-              {result.metadata?.language && (
-                <div className="flex items-center gap-1">
-                  <Globe className="w-4 h-4" />
-                  <span>{result.metadata.language.toUpperCase()}</span>
-                </div>
-              )}
-              {result.metadata?.confidence && (
-                <div className="flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>{(result.metadata.confidence * 100).toFixed(1)}% confidence</span>
-                </div>
+              {!isContentVisible && onRemove && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRemove}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
               )}
             </div>
-
-            <div className="border rounded-lg divide-y">
-              {sections.map(section => (
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isVisibleProp && (
+            <div className="space-y-1">
+              {sections.map((section, index) => (
                 <CollapsibleSection
                   key={section.id}
                   section={section}
                   onToggle={toggleSection}
-                  isPreview={showPreview}
+                  isPreview={!isVisibleProp}
                   isEditing={isEditing}
                   onSectionEdit={onSectionEdit}
                   editorRef={editorRef}
+                  className="bg-card border-muted hover:border-muted-foreground/20"
                 />
               ))}
             </div>
-          </div>
-
-          <AnimatePresence>
-            {selectedRange && (
-              <FloatingToolbar range={selectedRange} onFormat={handleFormat} />
-            )}
-          </AnimatePresence>
-        </div>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };

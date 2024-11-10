@@ -12,6 +12,8 @@ import { useToast } from "@/components/ui/use-toast"
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTheme } from "next-themes"
 import { Moon, Sun } from "lucide-react"
+import { Header } from '@/components/Header'
+import { useMediaQuery } from '@/hooks/use-media-query'
 
 export default function Home() {
   const [showDebug, setShowDebug] = useState(false)
@@ -23,7 +25,7 @@ export default function Home() {
     lastUpdated: new Date().toISOString()
   })
   const [newItemId, setNewItemId] = useState<string | null>(null)
-  const historyTabRef = useRef<HTMLDivElement>(null);
+  const historyTabRef = useRef<HTMLButtonElement>(null);
   const { theme, setTheme } = useTheme()
 
   // Load history on client side only
@@ -178,110 +180,178 @@ export default function Home() {
     }
   }, [toast]);
 
+  // Add smooth transitions
+  const pageTransitions = {
+    initial: { opacity: 0, y: 20 },
+    animate: { opacity: 1, y: 0 },
+    exit: { opacity: 0, y: -20 },
+    transition: { 
+      duration: 0.3,
+      ease: 'easeInOut'
+    }
+  };
+
+  // Update the tabContentTransitions
+  const tabContentTransitions = {
+    initial: { 
+      opacity: 0, 
+      x: activeTab === 'history' ? 20 : -20,
+      position: 'absolute'
+    },
+    animate: { 
+      opacity: 1, 
+      x: 0,
+      position: 'relative',
+      transition: {
+        duration: 0.15,
+        ease: [0.4, 0, 0.2, 1]
+      }
+    },
+    exit: { 
+      opacity: 0, 
+      x: activeTab === 'history' ? -20 : 20,
+      position: 'absolute',
+      transition: {
+        duration: 0.15,
+        ease: [0.4, 0, 0.2, 1]
+      }
+    }
+  };
+
+  // Add keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Alt + T for Transcribe tab
+      if (e.altKey && e.key === 't') {
+        setActiveTab('transcribe');
+      }
+      // Alt + H for History tab
+      if (e.altKey && e.key === 'h') {
+        setActiveTab('history');
+      }
+      // Alt + D for Debug mode
+      if (e.altKey && e.key === 'd') {
+        setShowDebug(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // Remember last active tab
+  useEffect(() => {
+    const lastTab = localStorage.getItem('lastActiveTab');
+    if (lastTab === 'transcribe' || lastTab === 'history') {
+      setActiveTab(lastTab);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('lastActiveTab', activeTab);
+  }, [activeTab]);
+
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="container mx-auto py-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-center flex-1">
-              Video to Text Transcription
-            </h1>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="dark-mode" className="text-sm">Dark Mode</Label>
-                <Switch
-                  id="dark-mode"
-                  checked={theme === 'dark'}
-                  onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
-                  className="data-[state=checked]:bg-primary"
-                >
-                  <div className="flex items-center justify-center w-full h-full">
-                    {theme === 'dark' ? (
-                      <Moon className="h-3 w-3" />
-                    ) : (
-                      <Sun className="h-3 w-3" />
-                    )}
-                  </div>
-                </Switch>
-              </div>
-              <div className="flex items-center gap-2">
-                <Label htmlFor="debug-mode" className="text-sm">Debug Mode</Label>
-                <Switch
-                  id="debug-mode"
-                  checked={showDebug}
-                  onCheckedChange={setShowDebug}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-background grid grid-rows-[auto_1fr_auto]">
+      <Header 
+        theme={theme}
+        setTheme={setTheme}
+        showDebug={showDebug}
+        setShowDebug={setShowDebug}
+      />
       
-      <main className="container mx-auto py-8 px-4">
-        <div className="max-w-4xl mx-auto">
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-2 mb-8">
-              <TabsTrigger value="transcribe">
-                Transcribe
-              </TabsTrigger>
-              <TabsTrigger 
-                value="history" 
-                className="relative"
-                asChild
-              >
-                <button ref={historyTabRef}>
-                  History
-                  <AnimatePresence>
-                    {history.items.length > 0 && (
-                      <motion.span
-                        initial={{ scale: 1 }}
-                        animate={{ 
-                          scale: [1, 1.2, 1],
-                          transition: { duration: 0.3, repeat: 2 }
-                        }}
-                        className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center"
-                      >
-                        {history.items.length}
-                      </motion.span>
-                    )}
-                  </AnimatePresence>
-                </button>
+      <motion.main 
+        className="h-full overflow-hidden"
+        {...pageTransitions}
+      >
+        <div className="h-full max-w-4xl mx-auto px-4">
+          <Tabs 
+            value={activeTab} 
+            onValueChange={setActiveTab}
+            className="h-full flex flex-col"
+          >
+            <TabsList className="grid w-full grid-cols-2 mt-5">
+              <TabsTrigger value="transcribe">Transcribe</TabsTrigger>
+              <TabsTrigger value="history" className="relative">
+                History
+                <AnimatePresence>
+                  {history.items.length > 0 && (
+                    <motion.span
+                      initial={{ scale: 1 }}
+                      animate={{ 
+                        scale: [1, 1.2, 1],
+                        transition: { duration: 0.3, repeat: 2 }
+                      }}
+                      className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center"
+                    >
+                      {history.items.length}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="transcribe">
-              <div className="mb-6 text-center">
-                <p className="text-muted-foreground">
-                  Upload a video file or paste a YouTube link to get started.
-                  Powered by vid2cleantxt and OpenAI Whisper.
-                </p>
-              </div>
-              
-              <VideoTranscription 
-                showDebug={showDebug} 
-                onTranscriptionComplete={handleTranscriptionComplete}
-              />
-            </TabsContent>
+            <div className="flex-1 relative mt-4">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={activeTab}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  variants={tabContentTransitions}
+                  className="absolute inset-0"
+                >
+                  {activeTab === 'transcribe' && (
+                    <TabsContent 
+                      value="transcribe" 
+                      className="h-full flex flex-col"
+                      forceMount
+                    >
+                      <p className="text-muted-foreground text-center mb-4">
+                        Upload a video file or paste a YouTube link to get started.
+                        Powered by vid2cleantxt and OpenAI Whisper.
+                      </p>
+                      
+                      <div className="flex-1 flex flex-col">
+                        <VideoTranscription 
+                          showDebug={showDebug} 
+                          onTranscriptionComplete={handleTranscriptionComplete}
+                        />
+                      </div>
+                    </TabsContent>
+                  )}
 
-            <TabsContent value="history">
-              <TranscriptionHistory
-                items={history.items}
-                onRestore={handleRestore}
-                onDelete={handleDelete}
-                onClearAll={handleClearAll}
-                onResetStorage={handleResetStorage}
-                newItemId={newItemId}
-              />
-            </TabsContent>
+                  {activeTab === 'history' && (
+                    <TabsContent 
+                      value="history" 
+                      className="h-full overflow-auto"
+                      forceMount
+                    >
+                      <TranscriptionHistory
+                        items={history.items}
+                        onRestore={handleRestore}
+                        onDelete={handleDelete}
+                        onClearAll={handleClearAll}
+                        onResetStorage={handleResetStorage}
+                        newItemId={newItemId}
+                      />
+                    </TabsContent>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           </Tabs>
         </div>
-      </main>
+      </motion.main>
 
-      <footer className="border-t mt-auto">
-        <div className="container mx-auto py-4 text-center text-sm text-muted-foreground">
-          <p>Built with Next.js and vid2cleantxt</p>
-        </div>
-      </footer>
+      <motion.footer 
+        className="border-t py-2 text-center text-sm text-muted-foreground"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+      >
+        Built with Next.js and vid2cleantxt
+      </motion.footer>
     </div>
   )
 } 
