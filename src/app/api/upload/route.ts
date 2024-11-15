@@ -4,7 +4,7 @@ import { join } from 'path'
 import { mkdir } from 'fs/promises'
 import { randomUUID } from 'crypto'
 
-const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024 // 2GB instead of 500MB
 
 export async function POST(request: NextRequest) {
   console.log('🟢 Starting file upload process')
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     if (file.size > MAX_FILE_SIZE) {
       console.log('🔴 File size exceeds limit')
       return NextResponse.json(
-        { error: 'File size exceeds 500MB limit' },
+        { error: 'File size exceeds 2GB limit' },
         { status: 400 }
       )
     }

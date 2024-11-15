@@ -155,7 +155,9 @@ interface UploadState {
   speed: string
   status: 'idle' | 'uploading' | 'complete' | 'error'
   isUploading: boolean
-  uploadId?: string  // Add this to store the upload ID
+  uploadId?: string
+  timeElapsed?: string
+  timeRemaining?: string
 }
 
 // Add type definitions for SSE messages (matching server types)
@@ -341,9 +343,9 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
         return
       }
 
-      // Validate file size (500MB limit)
-      if (selectedFile.size > 500 * 1024 * 1024) {
-        setError('File size must be less than 500MB')
+      // Update file size limit to 2GB
+      if (selectedFile.size > 2 * 1024 * 1024 * 1024) {
+        setError('File size must be less than 2GB')
         return
       }
 
@@ -362,21 +364,36 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     formData.append('file', fileToUpload)
     formData.append('language', selectedLanguage)
 
-    setUploadState(prev => ({ ...prev, isUploading: true, status: 'uploading' }))
+    setUploadState(prev => ({ 
+      ...prev, 
+      isUploading: true, 
+      status: 'uploading',
+      progress: 0,
+      speed: '0 MB/s',
+      timeElapsed: '0:00',
+      timeRemaining: 'Calculating'
+    }))
     setError('')
 
     const xhr = new XMLHttpRequest()
     uploadRef.current = xhr
+    const startTime = Date.now()
 
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {
         const progress = (event.loaded / event.total) * 100
-        const speed = formatSpeed(event.loaded, event.timeStamp)
+        const timeElapsed = Math.floor((Date.now() - startTime) / 1000)
+        const speed = formatSpeed(event.loaded, Date.now() - startTime)
+        const remainingBytes = event.total - event.loaded
+        const bytesPerSecond = event.loaded / (timeElapsed || 1)
+        const timeRemaining = Math.ceil(remainingBytes / bytesPerSecond)
+
         setUploadState(prev => ({
           ...prev,
           progress,
           speed,
-          status: 'uploading'
+          timeElapsed: `${Math.floor(timeElapsed / 60)}:${(timeElapsed % 60).toString().padStart(2, '0')}`,
+          timeRemaining: `${Math.floor(timeRemaining / 60)}:${(timeRemaining % 60).toString().padStart(2, '0')}`
         }))
       }
     })
@@ -787,6 +804,29 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
           isDragging && "opacity-50 scale-105 transition-all duration-200"
         )}
       >
+        {uploadState.status === 'uploading' && (
+          <div className="space-y-4 bg-background/50 p-4 rounded-lg border border-border">
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-medium">Uploading video...</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelUpload}
+                className="h-8 px-2"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <Progress value={uploadState.progress} />
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <div>Upload speed: {uploadState.speed}</div>
+              <div>Progress: {uploadState.progress.toFixed(1)}%</div>
+              <div>Time elapsed: {uploadState.timeElapsed}</div>
+              <div>Time remaining: {uploadState.timeRemaining}</div>
+            </div>
+          </div>
+        )}
+
         {uploadState.status === 'idle' ? (
           <div className="flex items-center justify-center w-full">
             <label 
@@ -805,7 +845,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                   <span className="font-semibold">Click to upload</span> or drag and drop
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  MP4, WebM, OGG, or MOV (MAX. 500MB)
+                  MP4, WebM, OGG, or MOV (MAX. 2GB)
                 </p>
               </div>
               <Input 
@@ -890,9 +930,9 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
   }, [startTranscription])
 
   const validateFile = (file: File) => {
-    const maxSize = 500 * 1024 * 1024 // 500MB
+    const maxSize = 2 * 1024 * 1024 * 1024 // 2GB
     if (file.size > maxSize) {
-      throw new Error('File size exceeds 500MB limit')
+      throw new Error('File size exceeds 2GB limit')
     }
     
     const validTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime']
@@ -988,7 +1028,8 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 "transition-all duration-200",
                 "hover:shadow-md hover:border-primary/50",
                 "dark:bg-muted/20 dark:hover:bg-muted/30",
-                activeTab === 'upload' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background"
+                activeTab === 'upload' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background",
+                error && activeTab === 'upload' && "ring-2 ring-destructive ring-offset-2 dark:ring-offset-background border-destructive"
               )}
               onClick={() => setActiveTab('upload')}
             >
@@ -1025,7 +1066,8 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 "transition-all duration-200",
                 "hover:shadow-md hover:border-primary/50",
                 "dark:bg-muted/20 dark:hover:bg-muted/30",
-                activeTab === 'youtube' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background"
+                activeTab === 'youtube' && "ring-2 ring-primary ring-offset-2 dark:ring-offset-background",
+                error && activeTab === 'youtube' && "ring-2 ring-destructive ring-offset-2 dark:ring-offset-background border-destructive"
               )}
               onClick={() => setActiveTab('youtube')}
             >
@@ -1085,13 +1127,23 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 {/* Start Button */}
                 <Button 
                   onClick={startTranscription}
-                  disabled={isTranscribing || (activeTab === 'upload' ? !file : !youtubeLink || !!error)}
+                  disabled={
+                    isTranscribing || 
+                    uploadState.isUploading || 
+                    uploadState.status !== 'complete' || 
+                    (activeTab === 'upload' ? !file : !youtubeLink || !!error)
+                  }
                   className="w-full relative"
                 >
                   {isTranscribing ? (
                     <div className="flex items-center gap-2">
                       <Loader className="w-4 h-4 animate-spin" />
                       <span>Transcribing...</span>
+                    </div>
+                  ) : uploadState.isUploading ? (
+                    <div className="flex items-center gap-2">
+                      <Loader className="w-4 h-4 animate-spin" />
+                      <span>Uploading...</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
@@ -1104,7 +1156,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                 {/* Language Selection */}
                 <div className={cn(
                   "flex items-center gap-2 p-2 bg-muted/40 rounded-lg",
-                  isTranscribing && "opacity-75"
+                  (isTranscribing || uploadState.isUploading) && "opacity-75"
                 )}>
                   <Globe className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">Language:</span>
@@ -1113,7 +1165,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                       id="language-select"
                       value={selectedLanguage}
                       onChange={setSelectedLanguage}
-                      disabled={isTranscribing}
+                      disabled={isTranscribing || uploadState.isUploading || uploadState.status !== 'complete'}
                     />
                   </div>
                 </div>

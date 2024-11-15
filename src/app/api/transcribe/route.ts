@@ -26,7 +26,7 @@ const ERROR_TYPES = {
 } as const
 
 // Add size limits
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB instead of 100MB
 
 // Add logger configuration at the top with other imports
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';

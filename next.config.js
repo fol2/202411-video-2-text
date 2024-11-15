@@ -25,17 +25,20 @@ const nextConfig = {
   },
   experimental: {
     serverComponentsExternalPackages: ['python-shell'],
+    serverActions: {
+      bodySizeLimit: '2gb'
+    }
   },
   httpAgentOptions: {
     keepAlive: true,
   },
   serverRuntimeConfig: {
-    maxBodySize: '500mb',
+    maxBodySize: '2gb',
     api: {
       bodyParser: {
-        sizeLimit: '500mb'
+        sizeLimit: '2gb'
       },
-      responseLimit: '500mb'
+      responseLimit: '2gb'
     }
   },
   outputFileTracing: true,
