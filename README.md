@@ -7,19 +7,32 @@
 
 ## Table of Contents
 
-- [Features](#features)
-- [Demo](#demo)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Technologies Used](#technologies-used)
-- [Architecture Overview](#architecture-overview)
-- [Component Descriptions](#component-descriptions)
-- [Advanced Usage](#advanced-usage)
-- [FAQ](#faq)
-- [Roadmap](#roadmap)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-- [License](#license)
+- [Video to Text Transcription Web App](#video-to-text-transcription-web-app)
+  - [Build with Next.js and vid2cleanTxt](#build-with-nextjs-and-vid2cleantxt)
+  - [Table of Contents](#table-of-contents)
+  - [Features](#features)
+  - [Demo](#demo)
+  - [Installation](#installation)
+    - [Prerequisites](#prerequisites)
+    - [Clone the Repository](#clone-the-repository)
+    - [Install Dependencies](#install-dependencies)
+    - [Configure Environment Variables](#configure-environment-variables)
+    - [Run the Application](#run-the-application)
+  - [Usage](#usage)
+  - [Technologies Used](#technologies-used)
+  - [Architecture Overview](#architecture-overview)
+    - [Frontend](#frontend)
+    - [Backend](#backend)
+    - [Data Flow](#data-flow)
+  - [Component Descriptions](#component-descriptions)
+  - [Advanced Usage](#advanced-usage)
+    - [Handling Large Files](#handling-large-files)
+    - [Customizing Transcription Parameters](#customizing-transcription-parameters)
+  - [FAQ](#faq)
+  - [Roadmap](#roadmap)
+  - [Troubleshooting](#troubleshooting)
+  - [Contributing](#contributing)
+  - [License](#license)
 
 ## Features
 
@@ -132,7 +145,7 @@ Adjust transcription settings such as language selection and chunk size by modif
 ## FAQ
 
 **Q1: What video formats are supported?**  
-*A1: Currently, vid2cleantxt-Web supports MP4, MOV, WEBM, OGG, and QuickTime formats. Additional formats are planned for future releases.*
+*A1: Currently, vid2cleantxt-Web supports MP4, MOV, WebM, OGG, AVI, MKV for video, and WAV, MP3, M4A, FLAC for audio formats.*
 
 **Q2: How long does transcription take?**  
 *A2: Transcription time varies based on video length and system performance. Typically, a 5-minute video takes approximately 2-3 minutes to transcribe.*

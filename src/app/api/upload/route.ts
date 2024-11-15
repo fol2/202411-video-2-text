@@ -4,7 +4,7 @@ import { join } from 'path'
 import { mkdir } from 'fs/promises'
 import { randomUUID } from 'crypto'
 
-const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024 // 2GB instead of 500MB
 
 export async function POST(request: NextRequest) {
   console.log('🟢 Starting file upload process')
@@ -26,17 +26,28 @@ export async function POST(request: NextRequest) {
     if (file.size > MAX_FILE_SIZE) {
       console.log('🔴 File size exceeds limit')
       return NextResponse.json(
-        { error: 'File size exceeds 500MB limit' },
+        { error: 'File size exceeds 2GB limit' },
         { status: 400 }
       )
     }
 
     // Validate file type
-    const validTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime']
+    const validTypes = [
+      'video/mp4', 
+      'video/webm', 
+      'video/ogg', 
+      'video/quicktime',
+      'video/x-msvideo',  // AVI
+      'video/x-matroska', // MKV
+      'audio/wav',
+      'audio/mpeg',      // MP3
+      'audio/mp4',       // M4A
+      'audio/flac'
+    ]
     if (!validTypes.includes(file.type)) {
       console.log('🔴 Invalid file type:', file.type)
       return NextResponse.json(
-        { error: 'Invalid file type. Please upload MP4, WebM, OGG, or MOV files only.' },
+        { error: 'Invalid file type. Please upload MP4, WebM, OGG, MOV, AVI, MKV, WAV, MP3, M4A, or FLAC files only.' },
         { status: 400 }
       )
     }

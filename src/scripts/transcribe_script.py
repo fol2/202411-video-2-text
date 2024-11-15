@@ -24,6 +24,7 @@ try:
         input_dir=input_dir,
         model_id="openai/whisper-large-v3",
         chunk_length=30,
+        generate_srt=True
     )
 
     # Output results in chunks

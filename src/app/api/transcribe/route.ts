@@ -26,7 +26,7 @@ const ERROR_TYPES = {
 } as const
 
 // Add size limits
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB instead of 100MB
 
 // Add logger configuration at the top with other imports
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -644,15 +644,17 @@ export async function POST(request: NextRequest) {
                 message: 'Transcription completed successfully',
                 transcription: transcriptionText
               });
+
+              // Comment out this cleanup
+              // await cleanupDirectory(tmpDir);
+              logger.info('Debug: Preserving temporary files at:', { tmpDir });
+              
+              controller.close();
+              return;
             } catch (error) {
               logger.error('Failed to read transcription file:', { error });
               throw error;
             }
-
-            // Clean up temp files
-            await cleanupDirectory(tmpDir);
-            controller.close();
-            return;
 
           } else if (youtubeLink) {
             logger.info('Starting YouTube video download:', { youtubeLink });
@@ -838,8 +840,8 @@ export async function POST(request: NextRequest) {
             throw new Error('Video file not found or not accessible');
           }
 
-          // Clean up temp files (remove duplicate rmtree call)
-          await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
+          // Comment out this cleanup
+          // await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
           
           sendSSEMessage(encoder, controller, {
             type: 'complete',
@@ -861,17 +863,20 @@ export async function POST(request: NextRequest) {
         } finally {
           if (tmpDir) {
             try {
-              // Check if directory exists before attempting to remove it
-              const exists = await fs.promises.access(tmpDir)
-                .then(() => true)
-                .catch(() => false);
+              // Keep the existing commented-out cleanup code
+              // const exists = await fs.promises.access(tmpDir)
+              //   .then(() => true)
+              //   .catch(() => false);
               
-              if (exists) {
-                await fs.promises.rm(tmpDir, { recursive: true, force: true });
-                logger.debug('Cleaned up temporary directory:', { tmpDir });
-              }
+              // if (exists) {
+              //   await fs.promises.rm(tmpDir, { recursive: true, force: true });
+              //   logger.debug('Cleaned up temporary directory:', { tmpDir });
+              // }
+
+              // Log the location of preserved files
+              logger.info('Debug: Temporary files preserved at:', { tmpDir });
             } catch (error) {
-              logger.warn('Failed to clean up temporary directory:', { tmpDir, error });
+              logger.warn('Note: Failed to handle temporary directory:', { tmpDir, error });
             }
           }
           controller.close();
