@@ -173,14 +173,15 @@ const CollapsibleSection = memo(({
   )
 })
 
-// Add this type definition near the top of the file
-type DownloadFormat = 'html' | 'markdown' | 'txt';
+// Update DownloadFormat type
+type DownloadFormat = 'html' | 'markdown' | 'txt' | 'srt';
 
 // Add this interface for the download menu
 interface DownloadMenuProps {
   onDownload: (format: DownloadFormat) => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  result: TranscriptionResult;
 }
 
 // Add these helper functions before the TranscriptionResults component
@@ -222,8 +223,8 @@ const generatePlainText = (sections: TranscriptionSection[], editedSections: Rec
   return `${metadata}\n${content}`;
 };
 
-// Add this new component for the download menu
-const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen }) => {
+// Update DownloadMenu component
+const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen, result }) => {
   return (
     <div className="relative">
       <Button 
@@ -249,15 +250,21 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               {[
                 { format: 'html' as const, label: 'HTML Document' },
                 { format: 'markdown' as const, label: 'Markdown' },
-                { format: 'txt' as const, label: 'Plain Text' }
+                { format: 'txt' as const, label: 'Plain Text' },
+                { format: 'srt' as const, label: 'Subtitles (SRT)' }
               ].map(({ format, label }) => (
                 <button
                   key={format}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2"
+                  className={cn(
+                    "w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2",
+                    format === 'srt' && !result.metadata?.srtContent && "opacity-50 cursor-not-allowed"
+                  )}
                   onClick={() => {
+                    if (format === 'srt' && !result.metadata?.srtContent) return;
                     onDownload(format);
                     setIsOpen(false);
                   }}
+                  disabled={format === 'srt' && !result.metadata?.srtContent}
                 >
                   <Download className="w-4 h-4" />
                   {label}
@@ -422,8 +429,8 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     }
   }
 
-  // Enhanced download function
-  const handleDownload = (format: DownloadFormat) => {
+  // Update handleDownload function
+  const handleDownload = async (format: DownloadFormat) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'transcription';
     let content: string;
@@ -431,16 +438,26 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     let mimeType: string;
 
     switch (format) {
+      case 'srt':
+        if (!result.metadata?.srtContent) return;
+        
+        content = result.metadata.srtContent;
+        filename = `${title}-${timestamp}.srt`;
+        mimeType = 'application/x-subrip';
+        break;
+        
       case 'markdown':
         content = generateMarkdown(sections, editedSections, result);
         filename = `${title}-${timestamp}.md`;
         mimeType = 'text/markdown';
         break;
+        
       case 'txt':
         content = generatePlainText(sections, editedSections, result);
         filename = `${title}-${timestamp}.txt`;
         mimeType = 'text/plain';
         break;
+        
       case 'html':
       default:
         const displayTitle = result.metadata?.title || 'Transcription';
@@ -579,6 +596,7 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
               onDownload={handleDownload}
               isOpen={isDownloadMenuOpen}
               setIsOpen={setIsDownloadMenuOpen}
+              result={result}
             />
             {onRemove && (
               <Button

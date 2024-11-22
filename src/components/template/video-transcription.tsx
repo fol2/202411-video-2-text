@@ -1152,8 +1152,9 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                   disabled={
                     isTranscribing || 
                     uploadState.isUploading || 
-                    uploadState.status !== 'complete' || 
-                    (activeTab === 'upload' ? !file : !youtubeLink || !!error)
+                    (activeTab === 'upload' 
+                      ? (!file || uploadState.status !== 'complete')  // Only check status for file uploads
+                      : (!youtubeLink || !!error))  // For YouTube, just check if we have a valid link
                   }
                   className="w-full relative"
                 >
@@ -1187,7 +1188,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                       id="language-select"
                       value={selectedLanguage}
                       onChange={setSelectedLanguage}
-                      disabled={isTranscribing || uploadState.isUploading || uploadState.status !== 'complete'}
+                      disabled={isTranscribing || uploadState.isUploading || (activeTab === 'upload' && uploadState.status !== 'complete')}
                     />
                   </div>
                 </div>

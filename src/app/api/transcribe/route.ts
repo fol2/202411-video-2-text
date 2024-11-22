@@ -156,6 +156,7 @@ interface CompleteSSEMessage extends BaseSSEMessage {
     language?: string;
     confidence?: number;
     duration?: number;
+    srtPath?: string;
   };
 }
 
@@ -639,15 +640,44 @@ export async function POST(request: NextRequest) {
                 length: transcriptionText.length 
               });
 
+              // Find and read the SRT file content
+              const tempFiles = await readdir(tmpDir);
+              const srtFile = tempFiles.find(f => f.endsWith('.srt'));
+              
+              logger.debug('Looking for SRT file:', { 
+                tempDir: tmpDir,
+                files: tempFiles,
+                srtFile 
+              });
+
+              let srtContent: string | undefined;
+              if (srtFile) {
+                try {
+                  srtContent = await readFile(join(tmpDir, srtFile), 'utf-8');
+                  logger.debug('Read SRT content:', { 
+                    length: srtContent.length 
+                  });
+                } catch (error) {
+                  logger.warn('Failed to read SRT file:', { error });
+                }
+              }
+
+              // Create metadata object without relying on result
+              const metadata = {
+                language,
+                srtContent // Include SRT content in metadata
+              };
+
               sendSSEMessage(encoder, controller, {
                 type: 'complete',
                 message: 'Transcription completed successfully',
-                transcription: transcriptionText
+                transcription: transcriptionText,
+                metadata
               });
 
-              // Comment out this cleanup
-              // await cleanupDirectory(tmpDir);
-              logger.info('Debug: Preserving temporary files at:', { tmpDir });
+              // Restore cleanup
+              await cleanupDirectory(tmpDir);
+              logger.debug('Cleaned up temporary files:', { tmpDir });
               
               controller.close();
               return;
@@ -793,14 +823,42 @@ export async function POST(request: NextRequest) {
                   length: transcriptionText.length 
                 });
 
+                // Find and read the SRT file content
+                const tempFiles = await readdir(tmpDir);
+                const srtFile = tempFiles.find(f => f.endsWith('.srt'));
+                
+                logger.debug('Looking for SRT file:', { 
+                  tempDir: tmpDir,
+                  files: tempFiles,
+                  srtFile 
+                });
+
+                let srtContent: string | undefined;
+                if (srtFile) {
+                  try {
+                    srtContent = await readFile(join(tmpDir, srtFile), 'utf-8');
+                    logger.debug('Read SRT content:', { 
+                      length: srtContent.length 
+                    });
+                  } catch (error) {
+                    logger.warn('Failed to read SRT file:', { error });
+                  }
+                }
+
+                // Create metadata object without relying on result
+                const metadata = {
+                  language,
+                  youtubeUrl: youtubeLink,
+                  srtContent // Include SRT content in metadata
+                };
+
                 sendSSEMessage(encoder, controller, {
                   type: 'complete',
                   message: 'Transcription completed successfully',
-                  transcription: transcriptionText
+                  transcription: transcriptionText,
+                  metadata
                 });
 
-                // Clean up temp files
-                await cleanupDirectory(tmpDir);
                 controller.close();
                 return;
               } catch (error) {
@@ -840,8 +898,8 @@ export async function POST(request: NextRequest) {
             throw new Error('Video file not found or not accessible');
           }
 
-          // Comment out this cleanup
-          // await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
+          // Restore this cleanup
+          await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
           
           sendSSEMessage(encoder, controller, {
             type: 'complete',
@@ -863,18 +921,14 @@ export async function POST(request: NextRequest) {
         } finally {
           if (tmpDir) {
             try {
-              // Keep the existing commented-out cleanup code
-              // const exists = await fs.promises.access(tmpDir)
-              //   .then(() => true)
-              //   .catch(() => false);
+              const exists = await fs.promises.access(tmpDir)
+                .then(() => true)
+                .catch(() => false);
               
-              // if (exists) {
-              //   await fs.promises.rm(tmpDir, { recursive: true, force: true });
-              //   logger.debug('Cleaned up temporary directory:', { tmpDir });
-              // }
-
-              // Log the location of preserved files
-              logger.info('Debug: Temporary files preserved at:', { tmpDir });
+              if (exists) {
+                await fs.promises.rm(tmpDir, { recursive: true, force: true });
+                logger.debug('Cleaned up temporary directory:', { tmpDir });
+              }
             } catch (error) {
               logger.warn('Note: Failed to handle temporary directory:', { tmpDir, error });
             }

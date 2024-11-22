@@ -7,5 +7,7 @@ export interface TranscriptionResult {
     duration?: number;
     language?: string;
     youtubeUrl?: string;
+    confidence?: number;
+    srtContent?: string;
   };
 } 
