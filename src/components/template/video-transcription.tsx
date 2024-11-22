@@ -818,7 +818,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
         {uploadState.status === 'uploading' && (
           <div className="space-y-4 bg-background/50 p-4 rounded-lg border border-border">
             <div className="flex justify-between items-center">
-              <span className="text-sm font-medium">Uploading media...</span>
+              <span className="text-sm font-medium">Uploading video...</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -856,7 +856,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                   <span className="font-semibold">Click to upload</span> or drag and drop
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  MP4, WebM, OGG, MOV, AVI, MKV, WAV, MP3, M4A, FLAC (MAX. 2GB)
+                  MP4, WebM, OGG, or MOV (MAX. 2GB)
                 </p>
               </div>
               <Input 
@@ -1152,9 +1152,8 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                   disabled={
                     isTranscribing || 
                     uploadState.isUploading || 
-                    (activeTab === 'upload' 
-                      ? (!file || uploadState.status !== 'complete')  // Only check status for file uploads
-                      : (!youtubeLink || !!error))  // For YouTube, just check if we have a valid link
+                    uploadState.status !== 'complete' || 
+                    (activeTab === 'upload' ? !file : !youtubeLink || !!error)
                   }
                   className="w-full relative"
                 >
@@ -1188,7 +1187,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                       id="language-select"
                       value={selectedLanguage}
                       onChange={setSelectedLanguage}
-                      disabled={isTranscribing || uploadState.isUploading || (activeTab === 'upload' && uploadState.status !== 'complete')}
+                      disabled={isTranscribing || uploadState.isUploading || uploadState.status !== 'complete'}
                     />
                   </div>
                 </div>
