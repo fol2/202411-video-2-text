@@ -9,6 +9,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { Loader2 } from 'lucide-react'
 
 // Add ErrorFallback component
 function ErrorFallback({ error }: FallbackProps) {
@@ -178,7 +180,7 @@ type DownloadFormat = 'html' | 'markdown' | 'txt' | 'srt';
 
 // Add this interface for the download menu
 interface DownloadMenuProps {
-  onDownload: (format: DownloadFormat) => void;
+  onDownload: (format: DownloadFormat, targetLanguage?: string) => Promise<void>;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   result: TranscriptionResult;
@@ -223,8 +225,77 @@ const generatePlainText = (sections: TranscriptionSection[], editedSections: Rec
   return `${metadata}\n${content}`;
 };
 
-// Update DownloadMenu component
+// Add this type near the top of the file
+type TranslationLanguage = {
+  code: string;
+  name: string;
+};
+
+// Update supported translation languages
+const TRANSLATION_LANGUAGES: TranslationLanguage[] = [
+  { code: 'zh-TW', name: 'Traditional Chinese' },
+  { code: 'zh-CN', name: 'Simplified Chinese' },
+  { code: 'zh-HK', name: 'Cantonese' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'hi', name: 'Hindi' },
+  { code: 'ar', name: 'Arabic' },
+  { code: 'fr', name: 'French' },
+  { code: 'ru', name: 'Russian' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'id', name: 'Indonesian' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'de', name: 'German' },
+  // Add more languages as needed
+];
+
+// Add this near the top of the file
+const translateAndDownloadSRT = async (
+  srtContent: string,
+  title: string,
+  targetLanguage: string
+) => {
+  try {
+    const response = await fetch('/api/translate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        srtContent,
+        targetLanguage,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Translation failed');
+    }
+
+    const { translatedContent } = await response.json();
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${title}-${targetLanguage}-${timestamp}.srt`;
+    
+    // Create and download the file
+    const blob = new Blob([translatedContent], { type: 'application/x-subrip;charset=utf-8' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+  } catch (error) {
+    console.error('Translation error:', error);
+    // You might want to show an error message to the user here
+  }
+};
+
+// Update the DownloadMenu component
 const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen, result }) => {
+  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+
   return (
     <div className="relative">
       <Button 
@@ -244,9 +315,9 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed mt-2 w-48 rounded-md shadow-lg bg-popover border border-border z-[9999]"
+            className="fixed mt-2 w-64 rounded-md shadow-lg bg-popover border border-border z-[9999]"
             style={{ 
-              maxHeight: '300px', 
+              maxHeight: '400px', 
               overflowY: 'auto',
               top: 'auto',
               left: 'auto',
@@ -254,6 +325,7 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
             }}
           >
             <div className="py-1">
+              {/* Original download options */}
               {[
                 { format: 'html' as const, label: 'HTML Document' },
                 { format: 'markdown' as const, label: 'Markdown' },
@@ -277,6 +349,51 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                   {label}
                 </button>
               ))}
+
+              {/* Translation section - only show if SRT is available */}
+              {result.metadata?.srtContent && (
+                <>
+                  <div className="px-4 py-2 border-t border-border">
+                    <div className="text-sm font-medium text-muted-foreground mb-2">
+                      Translate SRT to:
+                    </div>
+                    <Select
+                      value={selectedLanguage || ''}
+                      onValueChange={(value) => {
+                        setSelectedLanguage(value);
+                        if (value) {
+                          setIsTranslating(true);
+                          onDownload('srt', value).finally(() => {
+                            setIsTranslating(false);
+                            setIsOpen(false);
+                          });
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full text-sm">
+                        <SelectValue placeholder="Select language" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TRANSLATION_LANGUAGES.map((lang) => (
+                          <SelectItem 
+                            key={lang.code} 
+                            value={lang.code}
+                            disabled={lang.code === result.metadata?.language}
+                          >
+                            {lang.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {isTranslating && (
+                      <div className="text-xs text-muted-foreground mt-2 flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Translating...
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
         )}
@@ -437,9 +554,20 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   }
 
   // Enhanced download function
-  const handleDownload = (format: DownloadFormat) => {
+  const handleDownload = async (format: DownloadFormat, targetLanguage?: string) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
+
+    if (format === 'srt' && targetLanguage && result.metadata?.srtContent) {
+      // Handle translation and download
+      await translateAndDownloadSRT(
+        result.metadata.srtContent,
+        title,
+        targetLanguage
+      );
+      return;
+    }
+
     let content: string;
     let filename: string;
     let mimeType: string;
