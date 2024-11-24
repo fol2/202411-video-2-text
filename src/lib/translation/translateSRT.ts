@@ -31,64 +31,110 @@ const reconstructSRT = (blocks: SRTBlock[]): string => {
   ).join('\n\n');
 };
 
-// Add a context tracker
-let previousContext = "";
+// Add this interface for progress tracking
+export interface TranslationProgress {
+  currentChunk: number;
+  totalChunks: number;
+  percentComplete: number;
+  model: string;
+}
 
-export async function translateSRT(srtContent: string, targetLanguage: string): Promise<string> {
+export async function translateSRT(
+  srtContent: string, 
+  targetLanguage: string,
+  onProgress?: (progress: TranslationProgress) => void,
+  signal?: AbortSignal
+): Promise<string> {
   try {
-    // Parse SRT into blocks
     const blocks = parseSRT(srtContent);
-    
-    // Batch blocks for efficient translation (5 blocks at a time)
-    const batchSize = 5;
+    const batchSize = 5; // Keep batch size of 5
+    const totalChunks = Math.ceil(blocks.length / batchSize);
     const translatedBlocks: SRTBlock[] = [];
+    const model = "gpt-4o-mini";
+    
+    let contextWindow = "";
     
     for (let i = 0; i < blocks.length; i += batchSize) {
+      if (signal?.aborted) {
+        throw new Error('Translation aborted');
+      }
+
+      const currentChunk = Math.floor(i / batchSize) + 1;
+      const percentComplete = Math.round((currentChunk / totalChunks) * 100);
+      
+      onProgress?.({
+        currentChunk,
+        totalChunks,
+        percentComplete,
+        model
+      });
+
       const batch = blocks.slice(i, i + batchSize);
-      const textsToTranslate = batch.map(block => block.text).join('\n---\n');
+      // Format the input to preserve SRT structure
+      const textsToTranslate = batch.map(block => 
+        `${block.id}\n${block.timeCode}\n${block.text}`
+      ).join('\n\n');
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model,
         messages: [
           {
             role: "system",
-            content: `You are a professional subtitle translator. Follow these rules:
-            - Maintain consistent translation of names, terms, and pronouns
-            - Preserve the exact formatting and line breaks
-            - Return ONLY the translated text separated by ---
-            - Do not add any explanations or notes`
+            content: `You are a precise subtitle translator specializing in ${targetLanguage}. Critical requirements:
+
+1. FORMAT: Maintain exact SRT format for each subtitle:
+   <number>
+   <timecode>
+   <translated_text>
+
+2. NUMBERING: Keep original subtitle numbers unchanged
+3. TIMECODES: Keep all timecodes exactly as provided
+4. STYLE: 
+   - Maintain consistent translation style throughout
+   - Use natural ${targetLanguage} expressions
+   - Keep the same level of formality
+5. CONTENT:
+   - Preserve names, numbers, and technical terms
+   - Match the timing constraints of each subtitle
+   - Maintain the original meaning while being culturally appropriate
+6. CONTEXT: Consider previous translations for consistency
+
+Translate ONLY the text portions while keeping numbers and timecodes unchanged.
+Return the complete SRT-formatted translations with exact original formatting.`
           },
           {
             role: "user",
-            content: `Context from previous subtitles: ${previousContext}
+            content: `Previous context for consistency: ${contextWindow}
 
-            Translate the following subtitles to ${targetLanguage}:
+Translate these subtitles to ${targetLanguage}, maintaining exact SRT format:
 
 ${textsToTranslate}`
           }
         ],
-        temperature: 0.3,
+        temperature: 0.1, // Lower temperature for more consistency
       });
 
-      // Get translated texts and split them back into blocks
-      const translatedTexts = response.choices[0].message.content?.split('---') || [];
+      const translatedContent = response.choices[0].message.content?.trim() || '';
+      const translatedBatch = translatedContent.split('\n\n').map(block => {
+        const [id, timeCode, ...textLines] = block.split('\n');
+        return {
+          id: parseInt(id),
+          timeCode,
+          text: textLines.join('\n')
+        };
+      });
       
-      // Combine with original blocks
-      batch.forEach((block, index) => {
-        translatedBlocks.push({
-          ...block,
-          text: translatedTexts[index]?.trim() || block.text
-        });
-      });
+      translatedBlocks.push(...translatedBatch);
 
-      // Update context for next batch
-      previousContext = `${batch.map(block => block.text).join(' ')}`.slice(-200); // Keep last 200 characters as context
+      // Update context window with last two translated blocks for better continuity
+      contextWindow = translatedBatch.slice(-2)
+        .map(block => block.text)
+        .join('\n');
     }
 
-    // Reconstruct SRT file
     return reconstructSRT(translatedBlocks);
   } catch (error) {
     console.error('Translation error:', error);
-    throw new Error('Failed to translate SRT file');
+    throw error;
   }
 } 

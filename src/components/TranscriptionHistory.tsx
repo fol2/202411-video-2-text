@@ -618,6 +618,7 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const debouncedSearchTerm = useDebounce(searchTerm, 300)
   const [isEmptyTrashDialogOpen, setIsEmptyTrashDialogOpen] = useState(false)
+  const [transcriptions, setTranscriptions] = useState<TranscriptionResult[]>([]);
 
   // Update the filteredItems memo to properly sort results
   const filteredItems = useMemo(() => {
@@ -922,6 +923,14 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
 
     return <>{parts}</>
   }
+
+  const handleTranscriptionUpdate = (updatedResult: TranscriptionResult) => {
+    setTranscriptions(prev => 
+      prev.map(item => 
+        item.id === updatedResult.id ? updatedResult : item
+      )
+    );
+  };
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
@@ -1255,6 +1264,7 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
                             result={item.result}
                             defaultExpanded={true}
                             className={preloadedItems.has(item.id) && expandedItemId !== item.id ? 'pointer-events-none' : ''}
+                            onUpdate={handleTranscriptionUpdate}
                           />
                         </div>
                       </motion.div>

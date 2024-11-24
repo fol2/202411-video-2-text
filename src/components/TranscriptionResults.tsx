@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Copy, Download, Clock, Globe, CheckCircle2, Edit2, Eye, EyeOff, ChevronDown, ChevronRight, ChevronUp, Maximize2, Minimize2, X } from 'lucide-react'
+import { Copy, Download, Clock, Globe, CheckCircle2, Edit2, Eye, EyeOff, ChevronDown, ChevronRight, ChevronLeft, ChevronUp, Maximize2, Minimize2, X, FileText, FileJson, Subtitles, RefreshCw } from 'lucide-react'
 import { TranscriptionResult } from '@/components/template/video-transcription'
 import { ErrorBoundary, FallbackProps } from 'react-error-boundary'
 import dynamic from 'next/dynamic'
@@ -11,6 +11,13 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Loader2 } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 
 // Add ErrorFallback component
 function ErrorFallback({ error }: FallbackProps) {
@@ -69,6 +76,7 @@ interface TranscriptionResultsProps {
   result: TranscriptionResult;
   onRemove?: () => void;
   className?: string;
+  onUpdate?: (updatedResult: TranscriptionResult) => void;
 }
 
 // Add new interfaces for section management
@@ -180,7 +188,7 @@ type DownloadFormat = 'html' | 'markdown' | 'txt' | 'srt';
 
 // Add this interface for the download menu
 interface DownloadMenuProps {
-  onDownload: (format: DownloadFormat, targetLanguage?: string) => Promise<void>;
+  onDownload: (format: DownloadFormat, targetLanguage?: string, onProgress?: (status: TranslationStatus) => void) => Promise<void>;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   result: TranscriptionResult;
@@ -245,14 +253,22 @@ const TRANSLATION_LANGUAGES: TranslationLanguage[] = [
   { code: 'id', name: 'Indonesian' },
   { code: 'ja', name: 'Japanese' },
   { code: 'de', name: 'German' },
-  // Add more languages as needed
 ];
 
-// Add this near the top of the file
+// Add this interface
+interface TranslationStatus {
+  currentChunk: number;
+  totalChunks: number;
+  percentComplete: number;
+  model: string;
+}
+
+// Update the translateAndDownloadSRT function
 const translateAndDownloadSRT = async (
   srtContent: string,
   title: string,
-  targetLanguage: string
+  targetLanguage: string,
+  onProgress?: (status: TranslationStatus) => void
 ) => {
   try {
     const response = await fetch('/api/translate', {
@@ -266,16 +282,141 @@ const translateAndDownloadSRT = async (
       }),
     });
 
-    if (!response.ok) {
-      throw new Error('Translation failed');
+    if (!response.ok) throw new Error('Translation failed');
+    
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    let translatedContent = '';
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = new TextDecoder().decode(value);
+      const events = chunk.split('\n\n').filter(Boolean);
+      
+      for (const event of events) {
+        const data = JSON.parse(event.replace('data: ', ''));
+        
+        if (data.type === 'progress') {
+          onProgress?.({
+            currentChunk: data.currentChunk,
+            totalChunks: data.totalChunks,
+            percentComplete: data.percentComplete,
+            model: data.model
+          });
+        } else if (data.type === 'complete') {
+          translatedContent = data.translatedContent;
+        } else if (data.type === 'error') {
+          throw new Error(data.error);
+        }
+      }
     }
 
-    const { translatedContent } = await response.json();
+    return translatedContent;
+  } catch (error) {
+    console.error('Translation error:', error);
+    throw error;
+  }
+};
+
+// Update the TranslationManager to include better linking
+const TranslationManager = {
+  STORAGE_KEY: 'translationHistory',
+
+  // Get translations for a specific transcription
+  getTranslations: (transcriptionId: string) => {
+    try {
+      const data = localStorage.getItem(TranslationManager.STORAGE_KEY);
+      if (!data) return {};
+      
+      const translations = JSON.parse(data);
+      return translations[transcriptionId] || {};
+    } catch (error) {
+      console.error('Failed to get translations:', error);
+      return {};
+    }
+  },
+
+  // Save a new translation with metadata
+  saveTranslation: (transcriptionId: string, languageCode: string, content: string) => {
+    try {
+      const data = localStorage.getItem(TranslationManager.STORAGE_KEY);
+      const translations = data ? JSON.parse(data) : {};
+      
+      // Simply update the translation content
+      translations[transcriptionId] = {
+        ...(translations[transcriptionId] || {}),
+        translations: {
+          ...(translations[transcriptionId]?.translations || {}),
+          [languageCode]: {
+            content,
+            updatedAt: new Date().toISOString()
+          }
+        }
+      };
+
+      localStorage.setItem(TranslationManager.STORAGE_KEY, JSON.stringify(translations));
+      return true;
+    } catch (error) {
+      console.error('Failed to save translation:', error);
+      return false;
+    }
+  },
+
+  // Get a specific translation
+  getTranslation: (transcriptionId: string, languageCode: string) => {
+    try {
+      const translations = TranslationManager.getTranslations(transcriptionId);
+      return translations?.translations?.[languageCode]?.content;
+    } catch (error) {
+      console.error('Failed to get translation:', error);
+      return null;
+    }
+  },
+
+  // List available languages for a transcription
+  getAvailableLanguages: (transcriptionId: string) => {
+    try {
+      const translations = TranslationManager.getTranslations(transcriptionId);
+      return translations?.metadata?.availableLanguages || [];
+    } catch (error) {
+      console.error('Failed to get available languages:', error);
+      return [];
+    }
+  }
+};
+
+// Update the DownloadMenu component
+const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen, result }) => {
+  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
+  const [translationStatus, setTranslationStatus] = useState<TranslationStatus | null>(null);
+  const [showTranslations, setShowTranslations] = useState(false);
+  const [showLanguageSelect, setShowLanguageSelect] = useState(false);
+
+  // Get available translations
+  const availableTranslations = useMemo(() => {
+    const translations = TranslationManager.getTranslations(result.id);
+    const translatedLanguages = translations?.translations || {};
+    return Object.keys(translatedLanguages).map(code => {
+      const language = TRANSLATION_LANGUAGES.find(lang => lang.code === code);
+      return language ? { 
+        code, 
+        name: language.name,
+        content: translatedLanguages[code].content
+      } : null;
+    }).filter((lang): lang is { code: string; name: string; content: string } => lang !== null);
+  }, [result.id, result.metadata?.translations]);
+
+  // Add handleTranslationDownload function
+  const handleTranslationDownload = async (code: string, content: string) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${title}-${targetLanguage}-${timestamp}.srt`;
+    const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
+    const filename = `${title}-${code}-${timestamp}.srt`;
     
-    // Create and download the file
-    const blob = new Blob([translatedContent], { type: 'application/x-subrip;charset=utf-8' });
+    // Create blob and download
+    const blob = new Blob([content], { type: 'application/x-subrip;charset=utf-8' });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -284,17 +425,67 @@ const translateAndDownloadSRT = async (
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  };
 
-  } catch (error) {
-    console.error('Translation error:', error);
-    // You might want to show an error message to the user here
-  }
-};
+  // Update the handleRegenerateTranslation function in DownloadMenu
+  const handleRegenerateTranslation = async (code: string) => {
+    try {
+      // Set initial status
+      setTranslationStatus({
+        currentChunk: 0,
+        totalChunks: 0,
+        percentComplete: 0,
+        model: "gpt-4o-mini"
+      });
 
-// Update the DownloadMenu component
-const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen, result }) => {
-  const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
-  const [isTranslating, setIsTranslating] = useState(false);
+      // Keep menu open and show progress
+      setIsOpen(true);
+      setShowTranslations(true);
+
+      // Start translation with progress tracking
+      await onDownload('srt', code, (status) => {
+        setTranslationStatus(status);
+      });
+
+      // Reset status after completion
+      setTranslationStatus(null);
+
+      // Brief delay before closing to show completion
+      setTimeout(() => {
+        setShowTranslations(false);
+        setIsOpen(false);
+      }, 500);
+    } catch (error) {
+      console.error('Regeneration failed:', error);
+      setTranslationStatus(null);
+    }
+  };
+
+  // Handle new translation
+  const handleNewTranslation = async (languageCode: string) => {
+    setSelectedLanguage(languageCode);
+    setTranslationStatus({
+      currentChunk: 0,
+      totalChunks: 0,
+      percentComplete: 0,
+      model: "gpt-4o-mini"
+    });
+
+    try {
+      await onDownload('srt', languageCode, (status) => {
+        setTranslationStatus(status);
+      });
+
+      setTranslationStatus(null);
+      setSelectedLanguage(null);
+      setShowLanguageSelect(false);
+      setShowTranslations(true);
+    } catch (error) {
+      console.error('Translation failed:', error);
+      setTranslationStatus(null);
+      setSelectedLanguage(null);
+    }
+  };
 
   return (
     <div className="relative">
@@ -309,90 +500,263 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
         <ChevronDown className={cn("w-4 h-4 transition-transform", isOpen ? "rotate-180" : "")} />
       </Button>
       
+      {/* Main Download Menu */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed mt-2 w-64 rounded-md shadow-lg bg-popover border border-border z-[9999]"
+            className="fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border"
             style={{ 
-              maxHeight: '400px', 
-              overflowY: 'auto',
+              position: 'fixed',
               top: 'auto',
               left: 'auto',
               transform: 'translateY(calc(100% + 0.5rem))',
+              zIndex: 999
             }}
           >
             <div className="py-1">
-              {/* Original download options */}
-              {[
-                { format: 'html' as const, label: 'HTML Document' },
-                { format: 'markdown' as const, label: 'Markdown' },
-                { format: 'txt' as const, label: 'Plain Text' },
-                { format: 'srt' as const, label: 'Subtitles (SRT)' }
-              ].map(({ format, label }) => (
-                <button
-                  key={format}
-                  className={cn(
-                    "w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2",
-                    format === 'srt' && !result.metadata?.srtContent && "opacity-50 cursor-not-allowed"
-                  )}
-                  onClick={() => {
-                    if (format === 'srt' && !result.metadata?.srtContent) return;
-                    onDownload(format);
-                    setIsOpen(false);
-                  }}
-                  disabled={format === 'srt' && !result.metadata?.srtContent}
-                >
-                  <Download className="w-4 h-4" />
-                  {label}
-                </button>
-              ))}
-
-              {/* Translation section - only show if SRT is available */}
-              {result.metadata?.srtContent && (
-                <>
-                  <div className="px-4 py-2 border-t border-border">
-                    <div className="text-sm font-medium text-muted-foreground mb-2">
-                      Translate SRT to:
-                    </div>
-                    <Select
-                      value={selectedLanguage || ''}
-                      onValueChange={(value) => {
-                        setSelectedLanguage(value);
-                        if (value) {
-                          setIsTranslating(true);
-                          onDownload('srt', value).finally(() => {
-                            setIsTranslating(false);
-                            setIsOpen(false);
-                          });
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-full text-sm">
-                        <SelectValue placeholder="Select language" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TRANSLATION_LANGUAGES.map((lang) => (
-                          <SelectItem 
-                            key={lang.code} 
-                            value={lang.code}
-                            disabled={lang.code === result.metadata?.language}
-                          >
-                            {lang.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {isTranslating && (
-                      <div className="text-xs text-muted-foreground mt-2 flex items-center gap-2">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        Translating...
-                      </div>
+              {/* Original formats section */}
+              <div className="px-4 py-2">
+                <div className="text-sm font-medium text-foreground mb-2">
+                  Original Content
+                </div>
+                {[
+                  { format: 'html' as const, label: 'HTML Document', icon: FileText },
+                  { format: 'markdown' as const, label: 'Markdown', icon: FileJson },
+                  { format: 'txt' as const, label: 'Plain Text', icon: FileText },
+                  { format: 'srt' as const, label: 'Original SRT', icon: Subtitles }
+                ].map(({ format, label, icon: Icon }) => (
+                  <button
+                    key={format}
+                    className={cn(
+                      "w-full text-left px-3 py-1.5 text-sm hover:bg-muted flex items-center gap-2 rounded-sm",
+                      format === 'srt' && !result.metadata?.srtContent && "opacity-50 cursor-not-allowed"
                     )}
+                    onClick={() => {
+                      if (format === 'srt' && !result.metadata?.srtContent) return;
+                      onDownload(format);
+                      setIsOpen(false);
+                    }}
+                    disabled={format === 'srt' && !result.metadata?.srtContent}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Translations Button */}
+              {result.metadata?.srtContent && (
+                <div className="px-4 py-2 border-t border-border">
+                  <button
+                    className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted rounded-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowTranslations(true);
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      <span>Translations</span>
+                      {availableTranslations.length > 0 && (
+                        <Badge variant="secondary" className="ml-2">
+                          {availableTranslations.length}
+                        </Badge>
+                      )}
+                    </div>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Translations Submenu */}
+      <AnimatePresence>
+        {isOpen && showTranslations && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border"
+            style={{ 
+              position: 'fixed',
+              top: 'auto',
+              left: 'auto',
+              transform: 'translate(calc(100% + 0.5rem), 0)',
+              zIndex: 1000
+            }}
+          >
+            <div className="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => setShowTranslations(false)}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="font-medium">Translations</span>
+            </div>
+
+            <div className="py-2">
+              {/* Available Translations */}
+              {availableTranslations.length > 0 && (
+                <div className="px-4 py-2">
+                  <div className="text-sm font-medium text-foreground mb-2">
+                    Available Translations
                   </div>
-                </>
+                  {availableTranslations.map(({ code, name, content }) => (
+                    <div
+                      key={code}
+                      className="flex items-center gap-1 py-0.5"
+                    >
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="flex-1 h-8 px-2 justify-start"
+                        onClick={() => {
+                          handleTranslationDownload(code, content);
+                          setShowTranslations(false);
+                          setIsOpen(false);
+                        }}
+                        disabled={!!translationStatus}
+                      >
+                        <Globe className="w-3 h-3 mr-2" />
+                        <span className="text-sm">{name}</span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleRegenerateTranslation(code)}
+                        title="Regenerate translation"
+                        disabled={!!translationStatus}
+                      >
+                        <RefreshCw className={cn(
+                          "w-3 h-3",
+                          translationStatus && code === selectedLanguage && "animate-spin"
+                        )} />
+                      </Button>
+                    </div>
+                  ))}
+
+                  {/* Translation Progress */}
+                  {translationStatus && (
+                    <div className="mt-3 p-2 bg-muted rounded-md space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span className="text-sm">
+                          Translating... ({translationStatus.percentComplete}%)
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Chunk {translationStatus.currentChunk} of {translationStatus.totalChunks}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Using {translationStatus.model}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* New Translation Button */}
+              <div className="px-4 py-2 border-t border-border">
+                <button
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted rounded-sm"
+                  onClick={() => {
+                    setShowTranslations(false);
+                    // Show language selection menu
+                    setShowLanguageSelect(true);
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4" />
+                    <span>New Translation</span>
+                  </div>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Language Selection Submenu */}
+      <AnimatePresence>
+        {isOpen && showLanguageSelect && (
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border"
+            style={{ 
+              position: 'fixed',
+              top: 'auto',
+              left: 'auto',
+              transform: 'translate(calc(200% + 1rem), 0)',
+              zIndex: 1000
+            }}
+          >
+            <div className="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => !translationStatus && setShowLanguageSelect(false)} // Disable during translation
+                disabled={!!translationStatus}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="font-medium">
+                {translationStatus ? 'Translating...' : 'Select Language'}
+              </span>
+            </div>
+
+            <div className="py-2">
+              {/* Language Selection */}
+              <div className={cn(
+                "transition-opacity duration-200",
+                translationStatus ? "opacity-50 pointer-events-none" : "opacity-100"
+              )}>
+                {TRANSLATION_LANGUAGES
+                  .filter(lang => !availableTranslations.some(t => t.code === lang.code))
+                  .map((lang) => (
+                    <button
+                      key={lang.code}
+                      className="w-full flex items-center px-4 py-2 text-sm hover:bg-muted disabled:opacity-50"
+                      onClick={() => handleNewTranslation(lang.code)}
+                      disabled={!!translationStatus}
+                    >
+                      <Globe className="w-4 h-4 mr-2" />
+                      <span>{lang.name}</span>
+                    </button>
+                  ))}
+              </div>
+
+              {/* Translation Progress */}
+              {translationStatus && (
+                <div className="p-4 border-t border-border">
+                  <div className="p-2 bg-muted rounded-md space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <span className="text-sm">
+                        Translating... ({translationStatus.percentComplete}%)
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Chunk {translationStatus.currentChunk} of {translationStatus.totalChunks}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Using {translationStatus.model}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </motion.div>
@@ -402,10 +766,105 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
   );
 };
 
+// Add near the top of the file where other interfaces are defined
+interface TranslatedContent {
+  [languageCode: string]: string; // Maps language codes to translated SRT content
+}
+
+// Update the metadata type in TranscriptionResult interface
+interface TranscriptionResult {
+  id: string;
+  text: string;
+  metadata?: {
+    title?: string;
+    duration?: number;
+    language?: string;
+    youtubeUrl?: string;
+    srtContent?: string;
+    translations?: TranslatedContent; // Add this field
+  };
+}
+
+// Add storage management utilities
+const STORAGE_KEY = 'transcriptionHistory';
+const MAX_TRANSLATIONS_PER_ITEM = 5; // Limit number of translations per transcription
+
+// Add storage utilities
+const StorageUtils = {
+  getStorageUsage: () => {
+    const data = localStorage.getItem(STORAGE_KEY);
+    return data ? new Blob([data]).size : 0;
+  },
+
+  cleanupOldTranslations: (history: any) => {
+    return {
+      ...history,
+      items: history.items.map((item: any) => {
+        if (item.result.metadata?.translations) {
+          const translations = Object.entries(item.result.metadata.translations);
+          if (translations.length > MAX_TRANSLATIONS_PER_ITEM) {
+            // Keep only the most recent translations
+            const recentTranslations = translations
+              .slice(-MAX_TRANSLATIONS_PER_ITEM)
+              .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+            
+            return {
+              ...item,
+              result: {
+                ...item.result,
+                metadata: {
+                  ...item.result.metadata,
+                  translations: recentTranslations
+                }
+              }
+            };
+          }
+        }
+        return item;
+      })
+    };
+  }
+};
+
+// Add debug component
+const MetadataDebug: React.FC<{ metadata: any }> = ({ metadata }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (!isOpen) {
+    return (
+      <Button variant="ghost" size="sm" onClick={() => setIsOpen(true)}>
+        Show Metadata
+      </Button>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-background rounded-lg p-4 max-w-2xl w-full max-h-[80vh] overflow-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-medium">Metadata Debug</h3>
+          <Button variant="ghost" size="sm" onClick={() => setIsOpen(false)}>
+            Close
+          </Button>
+        </div>
+        <div className="space-y-2">
+          <div>
+            <strong>Storage Usage:</strong> {(StorageUtils.getStorageUsage() / 1024).toFixed(2)} KB
+          </div>
+          <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
+            {JSON.stringify(metadata, null, 2)}
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({ 
   result, 
   onRemove,
-  className
+  className,
+  onUpdate
 }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editedContent, setEditedContent] = useState(result.text)
@@ -418,6 +877,21 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   const [editedSections, setEditedSections] = useState<Record<string, string>>({})
   const [selectedRange, setSelectedRange] = useState<Range | null>(null)
   const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
+  const [localResult, setResult] = useState<TranscriptionResult>(result);
+
+  // Add initial load logging
+  useEffect(() => {
+    if (result.metadata?.translations) {
+      console.log('Initial translations:', {
+        id: result.id,
+        title: result.metadata.title,
+        availableLanguages: Object.keys(result.metadata.translations).map(code => {
+          const lang = TRANSLATION_LANGUAGES.find(l => l.code === code);
+          return lang ? `${lang.name} (${code})` : code;
+        })
+      });
+    }
+  }, []); // Only run once on mount
 
   // Update visibility when prop changes
   useEffect(() => {
@@ -554,20 +1028,68 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   }
 
   // Enhanced download function
-  const handleDownload = async (format: DownloadFormat, targetLanguage?: string) => {
+  const handleDownload = async (format: DownloadFormat, targetLanguage?: string, onProgress?: (status: TranslationStatus) => void) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
+    const title = localResult.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
 
-    if (format === 'srt' && targetLanguage && result.metadata?.srtContent) {
-      // Handle translation and download
-      await translateAndDownloadSRT(
-        result.metadata.srtContent,
-        title,
-        targetLanguage
-      );
+    if (format === 'srt' && targetLanguage) {
+      // Check for existing translation
+      const translations = TranslationManager.getTranslations(result.id);
+      
+      if (translations[targetLanguage]) {
+        // Use cached translation
+        const content = translations[targetLanguage];
+        const filename = `${title}-${targetLanguage}-${timestamp}.srt`;
+        downloadFile(content, filename, 'application/x-subrip');
+      } else if (localResult.metadata?.srtContent) {
+        try {
+          const translatedContent = await translateAndDownloadSRT(
+            localResult.metadata.srtContent,
+            title,
+            targetLanguage,
+            onProgress
+          );
+          
+          if (translatedContent) {
+            // Save translation
+            TranslationManager.saveTranslation(result.id, targetLanguage, translatedContent);
+            
+            // Update local state with new translation
+            const updatedResult = {
+              ...localResult,
+              metadata: {
+                ...localResult.metadata,
+                translations: {
+                  ...(localResult.metadata?.translations || {}),
+                  [targetLanguage]: translatedContent
+                }
+              }
+            };
+            
+            // Update states
+            setResult(updatedResult);
+            onUpdate?.(updatedResult);
+
+            // Download file
+            const filename = `${title}-${targetLanguage}-${timestamp}.srt`;
+            downloadFile(translatedContent, filename, 'application/x-subrip');
+          }
+        } catch (error) {
+          console.error('Translation failed:', error);
+          if (onProgress) {
+            onProgress({
+              currentChunk: 0,
+              totalChunks: 0,
+              percentComplete: 0,
+              model: "gpt-4o-mini"
+            });
+          }
+        }
+        return;
+      }
       return;
     }
-
+    
     let content: string;
     let filename: string;
     let mimeType: string;
@@ -575,30 +1097,30 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     switch (format) {
       case 'srt':
         // Use the SRT content directly from metadata
-        if (!result.metadata?.srtContent) {
+        if (!localResult.metadata?.srtContent) {
           console.error('No SRT content available');
           return;
         }
-        content = result.metadata.srtContent;
+        content = localResult.metadata.srtContent;
         filename = `${title}-${timestamp}.srt`;
         mimeType = 'application/x-subrip';
         break;
         
       case 'markdown':
-        content = generateMarkdown(sections, editedSections, result);
+        content = generateMarkdown(sections, editedSections, localResult);
         filename = `${title}-${timestamp}.md`;
         mimeType = 'text/markdown';
         break;
         
       case 'txt':
-        content = generatePlainText(sections, editedSections, result);
+        content = generatePlainText(sections, editedSections, localResult);
         filename = `${title}-${timestamp}.txt`;
         mimeType = 'text/plain';
         break;
         
       case 'html':
       default:
-        const displayTitle = result.metadata?.title || 'Transcription';
+        const displayTitle = localResult.metadata?.title || 'Transcription';
         content = `<!DOCTYPE html>
           <html>
             <head>
@@ -615,9 +1137,9 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
               <div class="metadata">
                 <h1>${displayTitle}</h1>
                 <p>Date: ${new Date().toLocaleString()}</p>
-                ${result.metadata?.language ? `<p>Language: ${result.metadata.language}</p>` : ''}
-                ${result.metadata?.duration ? `<p>Duration: ${formatDuration(result.metadata.duration)}</p>` : ''}
-                ${result.metadata?.confidence ? `<p>Confidence: ${(result.metadata.confidence * 100).toFixed(1)}%</p>` : ''}
+                ${localResult.metadata?.language ? `<p>Language: ${localResult.metadata.language}</p>` : ''}
+                ${localResult.metadata?.duration ? `<p>Duration: ${formatDuration(localResult.metadata.duration)}</p>` : ''}
+                ${localResult.metadata?.confidence ? `<p>Confidence: ${(localResult.metadata.confidence * 100).toFixed(1)}%</p>` : ''}
               </div>
               <div class="transcription">
                 ${sections.map(section => `
@@ -683,11 +1205,41 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     }
   }, [editorRef]);
 
+  // Add this helper function
+  const downloadFile = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
+  // Update useEffect to sync with prop changes
+  useEffect(() => {
+    setResult(result);
+  }, [result]);
+
+  // Add debug logging for available translations
+  useEffect(() => {
+    if (localResult.metadata?.translations) {
+      console.log('Available translations:', {
+        languages: Object.keys(localResult.metadata.translations),
+        result: localResult
+      });
+    }
+  }, [localResult.metadata?.translations]);
+
   return (
     <div className={cn("space-y-4", className)}>
       <Card className="relative bg-card border-muted">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <div />
+          <div className="flex items-center gap-2">
+            <MetadataDebug metadata={localResult.metadata} />
+          </div>
           
           <div className="flex items-center gap-2">
             <Button
@@ -734,7 +1286,7 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
               onDownload={handleDownload}
               isOpen={isDownloadMenuOpen}
               setIsOpen={setIsDownloadMenuOpen}
-              result={result}
+              result={localResult}
             />
             {onRemove && (
               <Button
