@@ -157,6 +157,8 @@ interface CompleteSSEMessage extends BaseSSEMessage {
     confidence?: number;
     duration?: number;
     srtPath?: string;
+    srtContent?: string;
+    youtubeUrl?: string;
   };
 }
 
@@ -654,8 +656,9 @@ export async function POST(request: NextRequest) {
               if (srtFile) {
                 try {
                   srtContent = await readFile(join(tmpDir, srtFile), 'utf-8');
-                  logger.debug('Read SRT content:', { 
-                    length: srtContent.length 
+                  logger.debug('SRT content:', { 
+                    content: srtContent.slice(0, 500) + (srtContent.length > 500 ? '...' : ''),
+                    totalLength: srtContent.length 
                   });
                 } catch (error) {
                   logger.warn('Failed to read SRT file:', { error });
@@ -665,7 +668,8 @@ export async function POST(request: NextRequest) {
               // Create metadata object without relying on result
               const metadata = {
                 language,
-                srtContent // Include SRT content in metadata
+                youtubeUrl: youtubeLink,
+                srtContent: srtContent,
               };
 
               sendSSEMessage(encoder, controller, {
@@ -837,8 +841,9 @@ export async function POST(request: NextRequest) {
                 if (srtFile) {
                   try {
                     srtContent = await readFile(join(tmpDir, srtFile), 'utf-8');
-                    logger.debug('Read SRT content:', { 
-                      length: srtContent.length 
+                    logger.debug('SRT content:', { 
+                      content: srtContent.slice(0, 500) + (srtContent.length > 500 ? '...' : ''),
+                      totalLength: srtContent.length 
                     });
                   } catch (error) {
                     logger.warn('Failed to read SRT file:', { error });
@@ -849,7 +854,7 @@ export async function POST(request: NextRequest) {
                 const metadata = {
                   language,
                   youtubeUrl: youtubeLink,
-                  srtContent // Include SRT content in metadata
+                  srtContent: srtContent,
                 };
 
                 sendSSEMessage(encoder, controller, {

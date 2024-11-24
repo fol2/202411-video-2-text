@@ -244,7 +244,14 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-popover border border-border z-50"
+            className="fixed mt-2 w-48 rounded-md shadow-lg bg-popover border border-border z-[9999]"
+            style={{ 
+              maxHeight: '300px', 
+              overflowY: 'auto',
+              top: 'auto',
+              left: 'auto',
+              transform: 'translateY(calc(100% + 0.5rem))',
+            }}
           >
             <div className="py-1">
               {[
@@ -430,20 +437,27 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
   }
 
   // Update handleDownload function
-  const handleDownload = async (format: DownloadFormat) => {
+  const handleDownload = (format: DownloadFormat) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'transcription';
+    const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
     let content: string;
     let filename: string;
     let mimeType: string;
 
+    // Add debug logging
+    console.log('Handling download:', { format, hasSRT: Boolean(result.metadata?.srtContent) });
+
     switch (format) {
       case 'srt':
-        if (!result.metadata?.srtContent) return;
+        if (!result.metadata?.srtContent) {
+          console.warn('SRT content not available');
+          return;
+        }
         
         content = result.metadata.srtContent;
         filename = `${title}-${timestamp}.srt`;
         mimeType = 'application/x-subrip';
+        console.log('Preparing SRT download:', { contentLength: content.length });
         break;
         
       case 'markdown':
