@@ -444,10 +444,18 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     let filename: string;
     let mimeType: string;
 
-    // Add debug logging
-    console.log('Handling download:', { format, hasSRT: Boolean(result.metadata?.srtContent) });
-
     switch (format) {
+      case 'srt':
+        // Use the SRT content directly from metadata
+        if (!result.metadata?.srtContent) {
+          console.error('No SRT content available');
+          return;
+        }
+        content = result.metadata.srtContent;
+        filename = `${title}-${timestamp}.srt`;
+        mimeType = 'application/x-subrip';
+        break;
+        
       case 'markdown':
         content = generateMarkdown(sections, editedSections, result);
         filename = `${title}-${timestamp}.md`;
