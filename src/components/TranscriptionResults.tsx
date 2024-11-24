@@ -436,7 +436,7 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     }
   }
 
-  // Update handleDownload function
+  // Enhanced download function
   const handleDownload = (format: DownloadFormat) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const title = result.metadata?.title?.replace(/[^a-z0-9]/gi, '_') || 'transcription';
@@ -448,18 +448,6 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     console.log('Handling download:', { format, hasSRT: Boolean(result.metadata?.srtContent) });
 
     switch (format) {
-      case 'srt':
-        if (!result.metadata?.srtContent) {
-          console.warn('SRT content not available');
-          return;
-        }
-        
-        content = result.metadata.srtContent;
-        filename = `${title}-${timestamp}.srt`;
-        mimeType = 'application/x-subrip';
-        console.log('Preparing SRT download:', { contentLength: content.length });
-        break;
-        
       case 'markdown':
         content = generateMarkdown(sections, editedSections, result);
         filename = `${title}-${timestamp}.md`;
