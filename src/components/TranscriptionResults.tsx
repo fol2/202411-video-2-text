@@ -388,6 +388,43 @@ const TranslationManager = {
   }
 };
 
+// Update the constants at the top level
+const MENU_PADDING = 16; // Padding around menus
+const MENU_ITEM_HEIGHT = 36; // Average height of menu items
+const MENU_HEADER_HEIGHT = 48; // Height of menu header with back button
+const PROGRESS_STATUS_HEIGHT = 120; // Increased height for translation progress
+const SECTION_HEADER_HEIGHT = 32; // Height of section headers
+const MENU_MARGIN = 16; // Margin from viewport edges
+
+const calculateMenuPosition = (
+  buttonRect: DOMRect,
+  menuHeight: number,
+  windowHeight: number,
+  windowWidth: number,
+  scrollY: number,
+  scrollX: number
+) => {
+  let top = buttonRect.bottom + scrollY;
+  let left = buttonRect.left + scrollX;
+
+  // Check if menu would go off bottom of screen
+  if (top + menuHeight > windowHeight + scrollY) {
+    // Try to position above the button
+    const topPosition = buttonRect.top + scrollY - menuHeight;
+    // Use top position if it doesn't go off the top of the screen
+    if (topPosition > scrollY) {
+      top = topPosition;
+    }
+  }
+
+  // Check if menu would go off right of screen
+  if (left + 288 > windowWidth) { // 288 = menu width (272) + padding (16)
+    left = windowWidth - 288 - MENU_PADDING;
+  }
+
+  return { top, left };
+};
+
 // Update the DownloadMenu component
 const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOpen, result }) => {
   const [selectedLanguage, setSelectedLanguage] = useState<string | null>(null);
@@ -501,43 +538,56 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
     }
   }, [isOpen]);
 
-  // Add this useEffect to handle positioning
+  // Update the useEffect for positioning in DownloadMenu
   useEffect(() => {
     const updatePosition = () => {
-      if (buttonRef.current && isOpen) {
+      if (buttonRef.current && (isOpen || showTranslations || showLanguageSelect)) {
         const buttonRect = buttonRef.current.getBoundingClientRect();
-        const menuRect = menuRef.current?.getBoundingClientRect();
         
-        // Calculate position relative to viewport
-        let top = buttonRect.bottom + window.scrollY;
-        let left = buttonRect.left + window.scrollX;
+        // Calculate approximate menu height
+        let menuHeight = MENU_PADDING * 2; // Top and bottom padding
         
-        // Adjust position if menu would go off screen
-        if (menuRect) {
-          if (left + menuRect.width > window.innerWidth) {
-            left = window.innerWidth - menuRect.width - 16; // 16px margin
-          }
-          if (top + menuRect.height > window.innerHeight) {
-            top = buttonRect.top - menuRect.height + window.scrollY;
-          }
+        // Add height for main menu items
+        menuHeight += 4 * MENU_ITEM_HEIGHT; // 4 format options
+        
+        // Add height for translations section if available
+        if (result.metadata?.srtContent) {
+          menuHeight += MENU_ITEM_HEIGHT;
         }
-        
-        setMenuPosition({ top, left });
+
+        // Add extra height for translation status if active
+        if (translationStatus) {
+          menuHeight += PROGRESS_STATUS_HEIGHT;
+        }
+
+        const { top, left } = calculateMenuPosition(
+          buttonRect,
+          menuHeight,
+          window.innerHeight,
+          window.innerWidth,
+          0, // Use 0 for scrollY to make it relative to viewport
+          0  // Use 0 for scrollX to make it relative to viewport
+        );
+
+        setMenuPosition({ 
+          top: top - window.scrollY, // Subtract scrollY to make it relative to viewport
+          left: left - window.scrollX  // Subtract scrollX to make it relative to viewport
+        });
       }
     };
 
     // Update position when menu opens or window scrolls/resizes
-    if (isOpen) {
+    if (isOpen || showTranslations || showLanguageSelect) {
       updatePosition();
-      window.addEventListener('scroll', updatePosition, true);
+      window.addEventListener('scroll', updatePosition, { passive: true });
       window.addEventListener('resize', updatePosition);
       
       return () => {
-        window.removeEventListener('scroll', updatePosition, true);
+        window.removeEventListener('scroll', updatePosition);
         window.removeEventListener('resize', updatePosition);
       };
     }
-  }, [isOpen]);
+  }, [isOpen, showTranslations, showLanguageSelect, translationStatus, result.metadata?.srtContent]);
 
   return (
     <div className="relative">
@@ -569,10 +619,6 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               opacity: showTranslations || showLanguageSelect ? 0.5 : 1,
               y: 0 
             }}
-            animate={{ 
-              opacity: showTranslations || showLanguageSelect ? 0.5 : 1,
-              y: 0 
-            }}
             exit={{ opacity: 0, y: -10 }}
             className={cn(
               "absolute w-72 rounded-md shadow-lg bg-popover border border-border",
@@ -582,6 +628,8 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               position: 'fixed',
               top: `${menuPosition.top}px`,
               left: `${menuPosition.left}px`,
+              maxHeight: `calc(100vh - ${MENU_PADDING * 2}px)`,
+              overflowY: 'auto',
               zIndex: 999
             }}
           >
@@ -653,10 +701,6 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               opacity: showLanguageSelect ? 0.5 : 1,
               x: 0 
             }}
-            animate={{ 
-              opacity: showLanguageSelect ? 0.5 : 1,
-              x: 0 
-            }}
             exit={{ opacity: 0, x: 20 }}
             className={cn(
               "absolute w-72 rounded-md shadow-lg bg-popover border border-border",
@@ -664,8 +708,22 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
             )}
             style={{ 
               position: 'fixed',
-              top: menuPosition.top,
-              left: menuPosition.left + 288, // 272px (menu width) + 16px gap
+              top: Math.min(
+                menuPosition.top + 8,
+                // Calculate maximum allowed top position
+                window.innerHeight - (
+                  MENU_HEADER_HEIGHT + // Header with back button
+                  SECTION_HEADER_HEIGHT + // "Available Translations" header
+                  (MENU_ITEM_HEIGHT * availableTranslations.length) + // Translation items
+                  SECTION_HEADER_HEIGHT + // Border and padding between sections
+                  MENU_ITEM_HEIGHT + // "New Translation" button
+                  (translationStatus ? PROGRESS_STATUS_HEIGHT : 0) + // Progress status if active
+                  MENU_MARGIN * 2 // Margin from viewport edges
+                )
+              ),
+              left: menuPosition.left + 8,
+              maxHeight: `calc(100vh - ${MENU_MARGIN * 2}px)`,
+              overflowY: 'auto',
               zIndex: 1000
             }}
           >
@@ -674,11 +732,6 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
-                onClick={() => {
-                  setShowTranslations(false);
-                  // Don't need to explicitly set showLanguageSelect to false here
-                  // as it's already handled by the effect when closing
-                }}
                 onClick={() => {
                   setShowTranslations(false);
                   // Don't need to explicitly set showLanguageSelect to false here
@@ -784,8 +837,19 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
             className="absolute w-72 rounded-md shadow-lg bg-popover border border-border"
             style={{ 
               position: 'fixed',
-              top: menuPosition.top,
-              left: menuPosition.left + 576, // 2 * (272px + 16px gap)
+              top: Math.min(
+                menuPosition.top + 16,
+                // Calculate maximum allowed top position
+                window.innerHeight - (
+                  MENU_HEADER_HEIGHT + // Header with back button
+                  (MENU_ITEM_HEIGHT * TRANSLATION_LANGUAGES.length) + // Language options
+                  (translationStatus ? PROGRESS_STATUS_HEIGHT : 0) + // Progress status if active
+                  MENU_MARGIN * 2 // Margin from viewport edges
+                )
+              ),
+              left: menuPosition.left + 16,
+              maxHeight: `calc(100vh - ${MENU_MARGIN * 2}px)`,
+              overflowY: 'auto',
               zIndex: 1001
             }}
           >
@@ -794,12 +858,6 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
-                onClick={() => {
-                  if (!translationStatus) {
-                    setShowLanguageSelect(false);
-                    setShowTranslations(true); // Go back to translations menu instead of main menu
-                  }
-                }}
                 onClick={() => {
                   if (!translationStatus) {
                     setShowLanguageSelect(false);
