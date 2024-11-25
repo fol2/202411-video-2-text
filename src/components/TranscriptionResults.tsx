@@ -569,6 +569,10 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               opacity: showTranslations || showLanguageSelect ? 0.5 : 1,
               y: 0 
             }}
+            animate={{ 
+              opacity: showTranslations || showLanguageSelect ? 0.5 : 1,
+              y: 0 
+            }}
             exit={{ opacity: 0, y: -10 }}
             className={cn(
               "absolute w-72 rounded-md shadow-lg bg-popover border border-border",
@@ -649,6 +653,10 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               opacity: showLanguageSelect ? 0.5 : 1,
               x: 0 
             }}
+            animate={{ 
+              opacity: showLanguageSelect ? 0.5 : 1,
+              x: 0 
+            }}
             exit={{ opacity: 0, x: 20 }}
             className={cn(
               "absolute w-72 rounded-md shadow-lg bg-popover border border-border",
@@ -666,6 +674,11 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
+                onClick={() => {
+                  setShowTranslations(false);
+                  // Don't need to explicitly set showLanguageSelect to false here
+                  // as it's already handled by the effect when closing
+                }}
                 onClick={() => {
                   setShowTranslations(false);
                   // Don't need to explicitly set showLanguageSelect to false here
@@ -781,6 +794,12 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
+                onClick={() => {
+                  if (!translationStatus) {
+                    setShowLanguageSelect(false);
+                    setShowTranslations(true); // Go back to translations menu instead of main menu
+                  }
+                }}
                 onClick={() => {
                   if (!translationStatus) {
                     setShowLanguageSelect(false);
