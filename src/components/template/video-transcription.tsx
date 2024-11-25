@@ -606,26 +606,58 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
       if (!reader) throw new Error('No response body')
 
       const decoder = new TextDecoder()
-      
+      let buffer = '' // Add a buffer for incomplete chunks
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const text = decoder.decode(value)
-        const events = text.split('\n\n')
+        // Append new chunk to existing buffer
+        buffer += decoder.decode(value, { stream: true })
+
+        // Split buffer into complete events
+        const lines = buffer.split('\n')
         
-        for (const event of events) {
-          if (!event.trim() || !event.startsWith('data: ')) continue
+        // Keep the last potentially incomplete line in the buffer
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.trim() === '') continue
           
-          try {
-            const data = JSON.parse(event.slice(6))
-            handleServerMessage(data)
-          } catch (parseError) {
-            console.error('Error parsing event:', parseError)
-            setLogs(prev => [...prev, `Error parsing server response: ${parseError}`])
+          // Handle each complete line
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.slice(6).trim()
+              if (jsonStr) {
+                const data = JSON.parse(jsonStr)
+                handleServerMessage(data)
+              }
+            } catch (parseError) {
+              console.warn('Error parsing SSE message:', parseError)
+              // Log the problematic data for debugging
+              if (showDebug) {
+                console.debug('Problematic SSE data:', line)
+              }
+              // Don't throw error, just continue with next message
+              continue
+            }
           }
         }
       }
+
+      // Handle any remaining data in buffer
+      if (buffer.trim() && buffer.startsWith('data: ')) {
+        try {
+          const jsonStr = buffer.slice(6).trim()
+          if (jsonStr) {
+            const data = JSON.parse(jsonStr)
+            handleServerMessage(data)
+          }
+        } catch (parseError) {
+          console.warn('Error parsing final SSE message:', parseError)
+        }
+      }
+
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to transcribe'
       setError(errorMessage)

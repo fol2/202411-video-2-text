@@ -20,12 +20,18 @@ try:
     print(f"Starting transcription for directory: {input_dir}", file=sys.stderr)
     print(f"Source language: {language if language != 'auto' else 'Auto-detect'}", file=sys.stderr)
     
-    text_output_dir, metadata_output_dir = vid2cleantxt.transcribe.transcribe_dir(
-        input_dir=input_dir,
-        model_id="openai/whisper-large-v3",
-        chunk_length=30,
-        generate_srt=True
-    )
+    # Only pass language parameter if it's not set to auto
+    transcribe_kwargs = {
+        "input_dir": input_dir,
+        "model_id": "openai/whisper-large-v3",
+        "chunk_length": 30,
+        "generate_srt": True
+    }
+    
+    if language != "auto":
+        transcribe_kwargs["language"] = language
+    
+    text_output_dir, metadata_output_dir = vid2cleantxt.transcribe.transcribe_dir(**transcribe_kwargs)
 
     # Output results in chunks
     results = {
