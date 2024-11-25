@@ -650,20 +650,15 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
         // Search in all fields (existing search logic)
         searchableFields.forEach(field => {
           if (field.path) {
-            let value = item.result
+            let value: any = item.result
             for (const key of field.path) {
-              value = value?.[key as keyof typeof value]
+              value = value?.[key]
             }
-            const matches = searchField(value as string, field.label, field.type, trimmedSearch)
-            if (matches.length > 0) {
-              itemMatches.push(...matches)
-              hasMatches = true
-            }
-          } else {
-            const matches = searchField(item.result[field.key as keyof TranscriptionResult] as string, field.label, field.type, trimmedSearch)
-            if (matches.length > 0) {
-              itemMatches.push(...matches)
-              hasMatches = true
+            if (typeof value === 'string') {
+              const matches = searchField(value, field.label, field.type, trimmedSearch)
+              if (matches.length > 0) {
+                itemMatches.push(...matches)
+              }
             }
           }
         })
@@ -692,7 +687,7 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
         }
         return null
       })
-      .filter(Boolean) // Remove null entries
+      .filter((match): match is NonNullable<typeof match> => Boolean(match))
 
     // Update search results for highlighting
     setSearchResults(results)
@@ -867,7 +862,7 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
 
   // Add this effect to measure and set initial width
   useEffect(() => {
-    const container = document.querySelector('.custom-scrollbar')
+    const container = document.querySelector('.custom-scrollbar') as HTMLElement
     if (container) {
       const width = container.getBoundingClientRect().width
       container.style.setProperty('--content-width', `${width}px`)
@@ -1262,7 +1257,6 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
                         <div className="p-4">
                           <TranscriptionResults 
                             result={item.result}
-                            defaultExpanded={true}
                             className={preloadedItems.has(item.id) && expandedItemId !== item.id ? 'pointer-events-none' : ''}
                             onUpdate={handleTranscriptionUpdate}
                           />

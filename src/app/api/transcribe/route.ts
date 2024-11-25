@@ -141,6 +141,8 @@ interface ProgressSSEMessage extends BaseSSEMessage {
   currentStep?: string;
   totalSteps?: string;
   visualBar?: string;
+  timeElapsed?: string;
+  stepsPerSecond?: string;
 }
 
 interface ErrorSSEMessage extends BaseSSEMessage {
@@ -296,24 +298,23 @@ async function ensureCacheDirectories(): Promise<void> {
         await writeFile(testFile, '')
         await fs.promises.unlink(testFile)
       } catch (error) {
-        throw new Error(`Cache directory ${cachePath} is not writable: ${error.message}`)
+        throw new Error(`Cache directory ${cachePath} is not writable: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
   } catch (error) {
     console.error('Failed to setup cache directories:', error)
-    throw new Error(`Cache directory setup failed: ${error.message}`)
+    throw new Error(`Cache directory setup failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 const getTranscriptionProcessConfig = () => ({
-  stdio: ['pipe', 'pipe', 'pipe'],
+  stdio: ['pipe', 'pipe', 'pipe'] as ('pipe' | 'inherit' | 'ignore')[],
   env: {
     ...process.env,
     PYTHONPATH: process.env.PYTHONPATH || '',
     TRANSFORMERS_CACHE: join(process.cwd(), '.cache', 'huggingface'),
     NEUSPELL_DATA: join(process.cwd(), '.cache', 'neuspell_data'),
     TORCH_HOME: join(process.cwd(), '.cache', 'torch'),
-    // Add any additional environment variables here
   }
 })
 
@@ -369,7 +370,7 @@ async function cleanupDirectory(dir: string): Promise<void> {
 }
 
 // Add helper function to list directory contents
-async function logDirectoryContents(dir: string, logger: any) {
+async function logDirectoryContents(dir: string, logger: any): Promise<string[]> {
   try {
     const files = await readdir(dir, { withFileTypes: true });
     const contents = await Promise.all(
@@ -578,7 +579,7 @@ export async function POST(request: NextRequest) {
           }
           await mkdir(tmpDir, { recursive: true });
 
-          let videoPath: string;
+          let videoPath!: string;
 
           if (uploadId) {
             // Handle uploaded file transcription
@@ -668,7 +669,7 @@ export async function POST(request: NextRequest) {
               // Create metadata object without relying on result
               const metadata = {
                 language,
-                youtubeUrl: youtubeLink,
+                youtubeUrl: youtubeLink || undefined,
                 srtContent: srtContent,
               };
 
@@ -853,7 +854,7 @@ export async function POST(request: NextRequest) {
                 // Create metadata object without relying on result
                 const metadata = {
                   language,
-                  youtubeUrl: youtubeLink,
+                  youtubeUrl: youtubeLink || undefined,
                   srtContent: srtContent,
                 };
 
@@ -903,15 +904,8 @@ export async function POST(request: NextRequest) {
             throw new Error('Video file not found or not accessible');
           }
 
-          // Restore this cleanup
-          await execAsync(`python3 -c "import shutil; shutil.rmtree('${tmpDir}')"`)
+          controller.close();
           
-          sendSSEMessage(encoder, controller, {
-            type: 'complete',
-            transcription: transcriptionResult.text || transcriptionResult[0]?.text
-          })
-
-          controller.close()
         } catch (error) {
           logger.error('Transcription process failed:', { error });
           const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

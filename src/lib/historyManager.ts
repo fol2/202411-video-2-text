@@ -196,6 +196,7 @@ class HistoryManager {
             result: {
               id: crypto.randomUUID(),
               text: item.text,
+              createdAt: item.metadata?.transcribedAt || timestamp,
               metadata: {
                 ...item.metadata,
                 transcribedAt: item.metadata?.transcribedAt || legacyBaseDate

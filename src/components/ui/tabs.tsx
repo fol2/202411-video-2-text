@@ -24,7 +24,9 @@ TabsList.displayName = TabsPrimitive.List.displayName
 
 const TabsTrigger = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger> & {
+    'data-state'?: string
+  }
 >(({ className, children, ...props }, ref) => {
   const [isActive, setIsActive] = React.useState(false)
 

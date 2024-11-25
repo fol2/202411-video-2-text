@@ -27,9 +27,8 @@ export async function POST(request: NextRequest) {
 
     const stream = new ReadableStream({
       async start(controller) {
+        const encoder = new TextEncoder();
         try {
-          const encoder = new TextEncoder();
-
           const translatedSRT = await translateSRT(
             srtContent, 
             targetLanguage,

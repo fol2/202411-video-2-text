@@ -688,7 +688,26 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
     )
   })
 
-  // Update the YouTubeInput component to include Shorts example
+  // Add this function at the component level, before the return statement
+  const handlePaste = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const text = await navigator.clipboard.readText();
+      if (isValidYoutubeUrl(text)) {
+        setYoutubeLink(text);
+        setActiveTab('youtube');
+        const videoId = getYoutubeVideoId(text);
+        if (videoId) {
+          const title = await fetchYouTubeTitle(videoId);
+          setVideoTitle(title);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read clipboard');
+    }
+  };
+
+  // Remove the handlePaste implementation from YouTubeInput component
   const YouTubeInput = () => {
     const [recentLinks, setRecentLinks] = useState<string[]>([]);
 
@@ -705,25 +724,6 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
       localStorage.setItem('recentYoutubeLinks', JSON.stringify(updated));
     };
 
-    // Update handlePaste to also switch tabs
-    const handlePaste = async () => {
-      try {
-        const text = await navigator.clipboard.readText()
-        if (isValidYoutubeUrl(text)) {
-          setYoutubeLink(text)
-          // Switch to YouTube tab when valid URL is pasted
-          setActiveTab('youtube')
-          const videoId = getYoutubeVideoId(text)
-          if (videoId) {
-            const title = await fetchYouTubeTitle(videoId)
-            setVideoTitle(title)
-          }
-        }
-      } catch (err) {
-        console.error('Failed to read clipboard')
-      }
-    }
-
     return (
       <div className="space-y-4">
         <div className="flex items-center space-x-2">
@@ -739,10 +739,10 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
             )}
           />
           <Button
-            variant="outline"
+            variant="ghost"
             size="icon"
+            className="shrink-0"
             onClick={handlePaste}
-            title="Paste from clipboard"
           >
             <ClipboardPaste className="h-4 w-4" />
           </Button>
@@ -1123,10 +1123,7 @@ export default function Component({ showDebug = false, onTranscriptionComplete }
                         variant="ghost"
                         size="icon"
                         className="shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePaste();
-                        }}
+                        onClick={handlePaste}
                       >
                         <ClipboardPaste className="h-4 w-4" />
                       </Button>

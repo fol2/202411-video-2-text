@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from '
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Copy, Download, Clock, Globe, CheckCircle2, Edit2, Eye, EyeOff, ChevronDown, ChevronRight, ChevronLeft, ChevronUp, Maximize2, Minimize2, X, FileText, FileJson, Subtitles, RefreshCw } from 'lucide-react'
-import { TranscriptionResult } from '@/components/template/video-transcription'
+import { TranscriptionResult, TranscriptionMetadata, TranslatedContent } from '@/types/transcription'
 import { ErrorBoundary, FallbackProps } from 'react-error-boundary'
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -766,25 +766,6 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
   );
 };
 
-// Add near the top of the file where other interfaces are defined
-interface TranslatedContent {
-  [languageCode: string]: string; // Maps language codes to translated SRT content
-}
-
-// Update the metadata type in TranscriptionResult interface
-interface TranscriptionResult {
-  id: string;
-  text: string;
-  metadata?: {
-    title?: string;
-    duration?: number;
-    language?: string;
-    youtubeUrl?: string;
-    srtContent?: string;
-    translations?: TranslatedContent; // Add this field
-  };
-}
-
 // Add storage management utilities
 const STORAGE_KEY = 'transcriptionHistory';
 const MAX_TRANSLATIONS_PER_ITEM = 5; // Limit number of translations per transcription
@@ -859,6 +840,13 @@ const MetadataDebug: React.FC<{ metadata: any }> = ({ metadata }) => {
     </div>
   );
 };
+
+// Add this helper function at file level, before any components
+const formatDuration = (seconds: number): string => {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.floor(seconds % 60)
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+}
 
 const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({ 
   result, 
@@ -1164,13 +1152,6 @@ const TranscriptionResults: React.FC<TranscriptionResultsProps> = ({
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   };
-
-  // Format duration helper
-  const formatDuration = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60)
-    const remainingSeconds = Math.floor(seconds % 60)
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
-  }
 
   // Modify setIsEditing to handle section expansion
   const handleEditToggle = useCallback(() => {

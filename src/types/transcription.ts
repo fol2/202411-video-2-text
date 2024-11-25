@@ -9,6 +9,7 @@ export interface TranscriptionMetadata {
   youtubeUrl?: string;
   srtContent?: string;
   translations?: TranslatedContent;
+  confidence?: number;
 }
 
 export interface TranscriptionResult {
