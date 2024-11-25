@@ -487,12 +487,30 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
     }
   };
 
+  // In the DownloadMenu component, add this effect to reset states when menu is closed
+  useEffect(() => {
+    if (!isOpen) {
+      // Reset all submenu states when main menu is closed
+      setTimeout(() => {
+        setShowTranslations(false);
+        setShowLanguageSelect(false);
+      }, 200); // Small delay to allow exit animations to complete
+    }
+  }, [isOpen]);
+
   return (
     <div className="relative">
       <Button 
         variant="outline" 
         size="sm" 
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen) {
+            // When opening, ensure we start at the main menu
+            setShowTranslations(false);
+            setShowLanguageSelect(false);
+          }
+          setIsOpen(!isOpen);
+        }}
         className="gap-2"
       >
         <Download className="w-4 h-4" />
@@ -505,9 +523,15 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
         {isOpen && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
+            animate={{ 
+              opacity: showTranslations || showLanguageSelect ? 0.5 : 1,
+              y: 0 
+            }}
             exit={{ opacity: 0, y: -10 }}
-            className="fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border"
+            className={cn(
+              "fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border",
+              (showTranslations || showLanguageSelect) && "pointer-events-none" // Disable interactions when submenu is open
+            )}
             style={{ 
               position: 'fixed',
               top: 'auto',
@@ -580,15 +604,22 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
         {isOpen && showTranslations && (
           <motion.div
             initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
+            animate={{ 
+              opacity: showLanguageSelect ? 0.5 : 1,
+              x: 0 
+            }}
             exit={{ opacity: 0, x: 20 }}
-            className="fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border"
+            className={cn(
+              "fixed mt-2 w-72 rounded-md shadow-lg bg-popover border border-border",
+              showLanguageSelect && "pointer-events-none" // Disable interactions when language select is open
+            )}
             style={{ 
               position: 'fixed',
               top: 'auto',
               left: 'auto',
               transform: 'translate(calc(100% + 0.5rem), 0)',
-              zIndex: 1000
+              zIndex: 1000,
+              backdropFilter: showLanguageSelect ? 'blur(2px)' : 'none'
             }}
           >
             <div className="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
@@ -596,7 +627,11 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
-                onClick={() => setShowTranslations(false)}
+                onClick={() => {
+                  setShowTranslations(false);
+                  // Don't need to explicitly set showLanguageSelect to false here
+                  // as it's already handled by the effect when closing
+                }}
               >
                 <ChevronLeft className="w-4 h-4" />
               </Button>
@@ -700,7 +735,8 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
               top: 'auto',
               left: 'auto',
               transform: 'translate(calc(200% + 1rem), 0)',
-              zIndex: 1000
+              zIndex: 1001,
+              boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.1)' // Add subtle overlay
             }}
           >
             <div className="sticky top-0 bg-popover border-b border-border p-2 flex items-center gap-2">
@@ -708,7 +744,12 @@ const DownloadMenu: React.FC<DownloadMenuProps> = ({ onDownload, isOpen, setIsOp
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
-                onClick={() => !translationStatus && setShowLanguageSelect(false)} // Disable during translation
+                onClick={() => {
+                  if (!translationStatus) {
+                    setShowLanguageSelect(false);
+                    setShowTranslations(true); // Go back to translations menu instead of main menu
+                  }
+                }}
                 disabled={!!translationStatus}
               >
                 <ChevronLeft className="w-4 h-4" />
