@@ -55,7 +55,7 @@ import {
 
 interface TranscriptionHistoryProps {
   items: HistoryV2['items']
-  onRestore: (item: TranscriptionResult) => void
+  onRestore: (id: string) => void
   onDelete: (ids: string[]) => void
   onClearAll: () => void
   onResetStorage: () => void
@@ -1198,7 +1198,7 @@ const TranscriptionHistory: React.FC<TranscriptionHistoryProps> = ({
                         size="sm"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRestore(item.result);
+                          onRestore(item.id);
                         }}
                       >
                         <Undo className="w-4 h-4" />

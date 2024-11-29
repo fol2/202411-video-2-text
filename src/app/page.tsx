@@ -180,12 +180,12 @@ export default function EnhancedTranscriptionPage() {
     }
   }
 
-  const handleRestore = (item: TranscriptionResult) => {
+  const handleRestore = (id: string) => {
     const history = HistoryManager.load()
     const updatedHistory = {
       ...history,
       items: history.items.map(historyItem => 
-        historyItem.id === item.id 
+        historyItem.id === id
           ? { ...historyItem, isDeleted: false, deletedAt: undefined }
           : historyItem
       )
